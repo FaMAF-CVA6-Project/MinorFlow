@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>MinorFlow — gem5 v25 RISC-V trace viewer</title>
+<title>MinorFlow - gem5 v25 RISC-V trace viewer</title>
 <style>
 /* ============================================================================
  * Base & color tokens
@@ -58,6 +58,17 @@ body {
 
 .vsep  { width: 0.5px; height: 18px; background: var(--border2); }
 .tlbl  { font-size: 11px; color: var(--text3); }
+#tracename {
+  font-size: 11px;
+  color: var(--text2);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
+#tracename:empty { display: none; }
 .tbtn  {
   padding: 3px 9px;
   background: var(--bg3);
@@ -127,17 +138,21 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 
 /* Legend ------------------------------------------------------------------- */
 #leg {
-  height: 24px;
+  min-height: 24px;
+  max-height: 50px;
   flex-shrink: 0;
   background: var(--bg2);
   border-bottom: 0.5px solid var(--border);
-  padding: 0 14px;
+  padding: 4px 14px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
-.li { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text3); cursor: help; }
-.ld { width: 10px; height: 10px; border-radius: 2px; }
+.li { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text3); cursor: help; flex-shrink: 0; white-space: nowrap; }
+.ld { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
 /* Canvas area (label panel | timeline panel) ------------------------------- */
 #area     { flex: 1; display: flex; overflow: hidden; }
@@ -167,14 +182,34 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 }
 
 /* Ruler runs above the timeline, offset by the label-panel width. */
-#ruler {
-  height: 18px;
+#rulerrow {
+  display: flex;
   flex-shrink: 0;
+  height: 18px;
+}
+#lblhead {
+  width: 210px;
+  flex-shrink: 0;
+  background: var(--bg3);
+  border-bottom: 0.5px solid var(--border2);
+  border-right: 0.5px solid var(--border2);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 10px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#lblhead .wrapkey { color: #f0a030; font-size: 12px; }
+#lblhead .cmpkey  { color: #3ec0b0; font-size: 12px; }
+#ruler {
+  flex: 1;
   position: relative;
   overflow: hidden;
   background: var(--bg3);
   border-bottom: 0.5px solid var(--border2);
-  margin-left: 210px;
 }
 #rulercanvas { position: absolute; top: 0; left: 0; }
 
@@ -199,7 +234,7 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
   position: fixed;
   z-index: 200;
   display: none;
-  max-width: 340px;
+  max-width: 360px;
   padding: 8px 12px;
   background: var(--bg2);
   border: 0.5px solid var(--border2);
@@ -208,9 +243,19 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
   line-height: 1.8;
   pointer-events: none;
 }
+/* Keep the two tooltip columns from colliding. Without an explicit
+ * separation the value cell (a cycle number like C123) could render
+ * directly on top of the left label cell on rows whose label was short
+ * or whose value was wide. A fixed right pad on the label column and a
+ * no-wrap value column makes the layout stable regardless of content. */
+#tt table { table-layout: auto; }
+#tt table td:first-child  { padding-right: 16px; white-space: nowrap; vertical-align: top; }
+#tt table td:last-child   { white-space: nowrap; vertical-align: top; }
+#tt table td.wrapval      { white-space: normal; max-width: 230px; }
+#tt table td[colspan="2"] { padding-right: 0; }
 
 /* ============================================================================
- * Inferred-config modal panel — opens when the user clicks the toolbar button.
+ * Inferred-config modal panel. Opens when the user clicks the toolbar button.
  * Sits above everything and dims the page underneath. Click on the backdrop
  * or the X button closes it.
  * ========================================================================== */
@@ -366,11 +411,12 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 <div id="top">
   <h1>💻 MinorFlow</h1>
   <span class="scope"
-        title="This viewer is built and tested against MinorCPU traces produced by gem5 version 25 running a RISC-V workload. Other gem5 versions or instruction-set architectures (Arm, x86, …) emit subtly different debug output and are NOT guaranteed to parse correctly — some events may be missing, misclassified, or rendered incorrectly.">gem5 v25 · RISC-V</span>
+        title="This viewer is built and tested against MinorCPU traces produced by gem5 version 25 running a RISC-V workload. Other gem5 versions or instruction-set architectures (Arm, x86, …) emit subtly different debug output and are NOT guaranteed to parse correctly. Some events may be missing, misclassified, or rendered incorrectly.">gem5 v25 · RISC-V</span>
 
   <div class="vsep"></div>
   <button class="tbtn" onclick="document.getElementById('fi').click()">📂 Open trace</button>
   <input type="file" id="fi" accept=".txt,.log">
+  <span id="tracename" title=""></span>
 
   <div class="vsep"></div>
   <span class="tlbl">Zoom X</span>
@@ -447,7 +493,10 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 <!-- ═══════════════════════════════ MAIN VIEW ══════════════════════════════ -->
 <div id="view">
   <div id="leg"></div>
-  <div id="ruler"><canvas id="rulercanvas"></canvas></div>
+  <div id="rulerrow">
+    <div id="lblhead"><span class="cmpkey">▪</span> compressed&nbsp;&nbsp;<span class="wrapkey">↪</span> spans &gt;1 line</div>
+    <div id="ruler"><canvas id="rulercanvas"></canvas></div>
+  </div>
   <div id="area">
     <div id="lblpanel"><canvas id="lblcanvas"></canvas></div>
     <div id="tlpanel">
@@ -460,22 +509,22 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 
 <!-- ═══════════════════════════════ STATUS BAR ═════════════════════════════ -->
 <div id="status">
-  <span title="Cycle the mouse cursor is over">Cycle: <span class="hi" id="s-c">—</span></span>
-  <span title="Instruction at the row under the cursor">Instr: <span class="hi" id="s-i">—</span></span>
-  <span title="Functional-unit class that handled the instruction">FU: <span class="hi" id="s-f">—</span></span>
-  <span title="Program counter">PC: <span class="hi" id="s-p">—</span></span>
+  <span title="Cycle the mouse cursor is over">Cycle: <span class="hi" id="s-c">-</span></span>
+  <span title="Instruction at the row under the cursor">Instr: <span class="hi" id="s-i">-</span></span>
+  <span title="Functional-unit class that handled the instruction">FU: <span class="hi" id="s-f">-</span></span>
+  <span title="Program counter">PC: <span class="hi" id="s-p">-</span></span>
   <span style="color:var(--border2)">│</span>
-  <span title="Total instructions fetched into the front end in the visible window — includes both committed and flushed (discarded after a misprediction) instructions">Fetched: <span class="hi" id="s-fet">—</span></span>
-  <span title="Total committed (retired) instructions in the visible window">Committed: <span class="hi" id="s-cmt">—</span></span>
-  <span title="Total cycles spanned by the visible window (max − min + 1)">Cycles: <span class="hi" id="s-cyc">—</span></span>
-  <span title="Wall-clock time across the visible window at the trace's simulated clock frequency. Computed as cycles ÷ frequency, where the frequency is inferred from the trace's tick rate (one tick = 1 ps under gem5's default Tick resolution, so f = 1e12 / ticks-per-cycle Hz). This is the real time the program would take on a processor running at that frequency.">Time: <span class="hi" id="s-time">—</span></span>
-  <span title="Total control-flow instructions (jal, jalr, beq, bne, blt, bge, c.j, c.jr, c.beqz, c.bnez, …) in the visible window">Branches: <span class="hi" id="s-br">—</span></span>
-  <span title="Branches whose predicted target differed from the resolved target — caused a pipeline flush">Mispred: <span class="hi" id="s-misp">—</span></span>
-  <span title="Instructions per cycle = committed / cycles">IPC: <span class="hi" id="s-ipc">—</span></span>
-  <span title="Total L1 ICache miss EVENTS in the visible window, deduped by request cycle. Two instructions whose halves share the same missing cache line count as ONE miss event (because the cache hierarchy sees one fill), not two.">IC✗: <span class="hi" id="s-icm">—</span></span>
-  <span title="Total L1 DCache miss EVENTS in the visible window, deduped by LSQ issue cycle, broken into load misses (ld) and store misses (st). These are the actual ReadReq / WriteReq misses the cache hierarchy reported — not the count of instructions that happened to land on a missing line.">DC✗: <span class="hi" id="s-dcm">—</span></span>
-  <span title="Speculative instructions discarded after a misprediction">Flush: <span class="hi" id="s-flsh">—</span></span>
-  <span style="margin-left:auto" title="Rows currently rendered / total instructions in the visible window">Visible: <span class="hi" id="s-vis">—</span> / <span class="hi" id="s-tot">—</span></span>
+  <span title="Total instructions fetched into the front end in the visible window. Includes both committed and flushed (discarded after a misprediction) instructions">Fetched: <span class="hi" id="s-fet">-</span></span>
+  <span title="Total committed (retired) instructions in the visible window">Committed: <span class="hi" id="s-cmt">-</span></span>
+  <span title="Total cycles spanned by the visible window (max − min + 1)">Cycles: <span class="hi" id="s-cyc">-</span></span>
+  <span title="Wall-clock time across the visible window at the trace's simulated clock frequency. Computed as cycles ÷ frequency, where the frequency is inferred from the trace's tick rate (one tick = 1 ps under gem5's default Tick resolution, so f = 1e12 / ticks-per-cycle Hz). This is the real time the program would take on a processor running at that frequency.">Time: <span class="hi" id="s-time">-</span></span>
+  <span title="Total control-flow instructions (jal, jalr, beq, bne, blt, bge, c.j, c.jr, c.beqz, c.bnez, …) in the visible window">Branches: <span class="hi" id="s-br">-</span></span>
+  <span title="Branches whose predicted target differed from the resolved target. Caused a pipeline flush">Mispred: <span class="hi" id="s-misp">-</span></span>
+  <span title="Instructions per cycle = committed / cycles">IPC: <span class="hi" id="s-ipc">-</span></span>
+  <span title="Total L1 ICache miss EVENTS in the visible window, deduped by request cycle. Two instructions whose halves share the same missing cache line count as ONE miss event (because the cache hierarchy sees one fill), not two.">IC✗: <span class="hi" id="s-icm">-</span></span>
+  <span title="Total L1 DCache miss EVENTS in the visible window, deduped by LSQ issue cycle, broken into load misses (ld) and store misses (st). These are the actual ReadReq / WriteReq misses the cache hierarchy reported. Not the count of instructions that happened to land on a missing line.">DC✗: <span class="hi" id="s-dcm">-</span></span>
+  <span title="Speculative instructions discarded after a misprediction">Flush: <span class="hi" id="s-flsh">-</span></span>
+  <span style="margin-left:auto" title="Rows currently rendered / total instructions in the visible window">Visible: <span class="hi" id="s-vis">-</span> / <span class="hi" id="s-tot">-</span></span>
 </div>
 
 <div id="tt"></div>
@@ -484,13 +533,13 @@ label.chk input { accent-color: var(--accent); cursor: pointer; }
 "use strict";
 
 /* ============================================================================
- * SECTION 1 — Constants
+ * SECTION 1 - Constants
  * ========================================================================== */
 
 /* Pipeline-stage colors (one entry per legend item / drawn segment). */
 const COL = {
   f1:      '#1e4a7a',  f1miss:  '#c03030',  f1stall: '#8a2020',
-  feStall: '#2c3a55',  // front-end "between lines" wait — used to fill the gap
+  feStall: '#2c3a55',  // front-end "between lines" wait. Used to fill the gap
                        // between the two segments of a line-wrapping inst
   f2:      '#163a6a',  f2buf:   '#0e2a50',
   dec:     '#4a2a80',  decbuf:  '#352060',
@@ -502,6 +551,39 @@ const COL = {
   memreq:  '#b08020',  dcmiss:  '#d03030',
   sbbuf:   '#c07020',
   flushed: '#3a1515',  // dimmed red used for everything on a flushed instruction
+};
+
+/* Single source of truth for the pipeline-bubble kinds. Each kind maps to
+ * its legend entry, the legend swatch, the rgba fill used on the resuming
+ * instruction's row, and the phrase shown in the tooltip. taken / refill
+ * / refillmiss are branch bubbles. serialize is the front-end flush a
+ * non-control serializing instruction (e.g. a gem5 M5Op carrying
+ * IsSerializeAfter) forces after it commits. */
+const BUB = {
+  taken: {
+    legendKey: 'bubTaken', label: 'Bubble: taken',
+    swatch: 'rgb(160,110,225)', fill: 'rgba(160,110,225,0.60)',
+    txt: '<span style="color:#40c0ff">taken-branch bubble (Fetch2 redirect)</span>',
+    desc: 'Predicted-taken bubble. A block on the resuming instruction row before its fetch: the Fetch2 prediction was right, but the target still has to walk the front end.',
+  },
+  refill: {
+    legendKey: 'bubRefill', label: 'Bubble: refill',
+    swatch: 'rgb(255,168,80)', fill: 'rgba(255,168,80,0.55)',
+    txt: '<span style="color:#ffb060">pipeline refill (mispredict, Execute redirect)</span>',
+    desc: 'Mispredict refill bubble. A block on the resuming instruction row: the branch was resolved at Execute, the front end flushed and the correct path refetched.',
+  },
+  refillmiss: {
+    legendKey: 'bubMiss', label: 'Bubble: refill + I$ miss',
+    swatch: 'rgb(224,72,72)', fill: 'rgba(224,72,72,0.58)',
+    txt: '<span style="color:#e05050">refill + I-cache miss on the speculative target</span>',
+    desc: 'A mispredict refill that also waited on the speculative wrong-path target fetch missing the instruction cache before Fetch1 could re-steer. The largest of the bubbles.',
+  },
+  serialize: {
+    legendKey: 'bubSerialize', label: 'Bubble: serialize',
+    swatch: 'rgb(90,160,170)', fill: 'rgba(90,160,170,0.55)',
+    txt: '<span style="color:#5ab0c0">pipeline serialize (front-end flush after the instruction commits)</span>',
+    desc: 'Not a branch. A non-control serializing instruction (for example a gem5 M5Op carrying IsSerializeAfter, such as m5_reset_stats or m5_dump_stats) drains and refetches the front end after it commits. The refetch cost is drawn on the next instruction row.',
+  },
 };
 
 /* MinorCPU forward-delay constants. gem5 does not emit these in the trace,
@@ -533,7 +615,7 @@ const MIN_CELL_FIT = 0.05;
  * f1reqA / f1respA / f1reqB / f1respB are the per-line cycles a
  * line-wrapping instruction keeps in addition to the aggregate
  * f1req/f1 pair. They MUST be in this list so the rebase shifts them
- * by the same offset — otherwise wrapping instructions render their
+ * by the same offset. Otherwise wrapping instructions render their
  * two Fetch1 segments at absolute (unshifted) cycles and the bars
  * disappear off-screen whenever the user sets a fetch-range filter. */
 const CYCLE_KEYS = [
@@ -544,9 +626,26 @@ const CYCLE_KEYS = [
 ];
 
 /* ============================================================================
- * SECTION 2 — State
+ * SECTION 2 - State
  * ========================================================================== */
 let allInstrs = [];   // every instruction parsed from the trace
+
+/* Loop-based min/max. Math.min(...arr) / Math.max(...arr) spread the
+ * array into call arguments and throw "Maximum call stack size exceeded"
+ * once the array passes ~125k elements, which a long trace easily
+ * reaches. These never spread, so trace size is not a limit. */
+function arrMin(a, fallback = 0) {
+  if (!a || a.length === 0) return fallback;
+  let m = a[0];
+  for (let i = 1; i < a.length; i++) if (a[i] < m) m = a[i];
+  return m;
+}
+function arrMax(a, fallback = 0) {
+  if (!a || a.length === 0) return fallback;
+  let m = a[0];
+  for (let i = 1; i < a.length; i++) if (a[i] > m) m = a[i];
+  return m;
+}
 let vis       = [];   // currently visible subset (filtered + rebased)
 let visBySeq  = new Map();   // seq -> {ins, row} index into `vis`
 let cellW     = 4;    // pixels per cycle
@@ -563,23 +662,27 @@ let pipelineStats = { f2buf: 0, dbuf: 0, ebuf: 0, cmWait: 0, icStall: 0, fuLat: 
 function getRowH() { return cellW >= 40 ? 26 : cellW >= 20 ? 20 : 15; }
 
 /* Per-instruction wait quantities used both by computePipelineStats() and by
- * the tooltip — kept here so the formula lives in one place.
+ * the tooltip. Kept here so the formula lives in one place.
  *
  * icStall: cycles Fetch1 spent waiting for the cache fill on a MISS only.
- * On a clean hit this is 0 — the normal one-cycle Fetch1 hit latency
+ * On a clean hit this is 0. The normal one-cycle Fetch1 hit latency
  * (max(tag,data) under parallel access) is not a "stall", it's the stage's
  * intrinsic access time. Reporting it as a stall on every hit would be
  * misleading. */
 function instWaits(ins) {
+  const nn = v => (v === null || v === undefined) ? null : Math.max(0, v);
   return {
     icStall: ins.f1req !== null && ins.f1 !== null
-               ? (ins.icMiss === true ? ins.f1 - ins.f1req - 1 : 0)
+               ? (ins.icMiss === true ? nn(ins.f1 - ins.f1req - 1) : 0)
                : null,
-    f2buf:   ins.f1 !== null && ins.f2 !== null        ? ins.f2 - ins.f1 - PIPE_F1_F2   : null,
-    dbuf:    ins.f2 !== null && ins.dec !== null       ? ins.dec - ins.f2 - PIPE_F2_DEC : null,
-    ebuf:    ins.dtoe !== null && ins.ex !== null      ? ins.ex - ins.dtoe              : null,
-    fuLat:   ins.ex !== null && ins.fuDone !== null    ? ins.fuDone - ins.ex            : null,
-    cmWait:  ins.fuDone !== null && ins.cm !== null    ? ins.cm - ins.fuDone            : null,
+    f2buf:   ins.f1 !== null && ins.f2 !== null        ? nn(ins.f2 - ins.f1 - PIPE_F1_F2)   : null,
+    dbuf:    ins.f2 !== null && ins.dec !== null       ? nn(ins.dec - ins.f2 - PIPE_F2_DEC) : null,
+    ebuf:    ins.dtoe !== null && ins.ex !== null      ? nn(ins.ex - ins.dtoe)              : null,
+    fuLat:   ins.ex !== null && ins.fuDone !== null    ? nn(ins.fuDone - ins.ex)            : null,
+    /* cmWait clamps at 0: for memory ops the LSQ lingers in the FU past
+     * commit, so fuDone can be a cycle after cm. That is not a negative
+     * commit-wait, it is simply no wait. */
+    cmWait:  ins.fuDone !== null && ins.cm !== null    ? nn(ins.cm - ins.fuDone)            : null,
   };
 }
 
@@ -613,7 +716,7 @@ function colorizeWait(val, max) {
 }
 
 /* ============================================================================
- * SECTION 3 — File I/O
+ * SECTION 3 - File I/O
  * ========================================================================== */
 document.getElementById('fi').addEventListener('change', e => {
   const f = e.target.files[0];
@@ -655,6 +758,13 @@ function loadF(f) {
       return;
     }
     parse(text);
+    /* Show the loaded trace's name (extension stripped, long names
+     * shortened, full name in the tooltip). */
+    const base = f.name.replace(/\.(txt|log)$/i, '');
+    const shown = base.length > 30 ? base.slice(0, 14) + '…' + base.slice(-14) : base;
+    const tn = document.getElementById('tracename');
+    tn.textContent = shown;
+    tn.title = base;
   };
   r.onerror = () => showModalMessage('File error', '<p>Could not read that file. It may be unreadable or too large for the browser.</p>');
   r.readAsText(f);
@@ -662,8 +772,7 @@ function loadF(f) {
 
 /* A deliberately-loose "looks like a MinorCPU trace" probe. We only need
  * BOTH (a) a tick-prefixed line somewhere AND (b) any MinorCPU-specific
- * keyword somewhere in the head. They don't have to be on the same line —
- * different debug-flag combinations produce different leading messages,
+ * keyword somewhere in the head. They don't have to be on the same line. * different debug-flag combinations produce different leading messages,
  * different SimObject path prefixes (board.processor.cores.core vs
  * system.cpu vs ...), and some setups even truncate the path. The point
  * of this check is just to reject files that clearly aren't traces
@@ -682,12 +791,12 @@ function escapeHtml(s) {
 }
 
 /* ============================================================================
- * SECTION 4 — Trace parser
+ * SECTION 4 - Trace parser
  *
  * gem5 emits one event per debug line, prefixed with the simulation tick.
  * There are two passes:
  *   1. Find ticks-per-cycle (the minimum positive delta between distinct
- *      ticks) — relying on a hard-coded MHz silently mis-aligns the timeline
+ *      ticks). Relying on a hard-coded MHz silently mis-aligns the timeline
  *      whenever the clock differs from the assumed value.
  *   2. Walk every line, dispatching to a regex per event type, and build
  *      per-instruction records keyed by gem5's fetchSeqNum.
@@ -695,7 +804,7 @@ function escapeHtml(s) {
 function parse(text) {
   const lines = text.split('\n');
 
-  /* ---- Pass 1 — auto-detect ticks per cycle ------------------------------- */
+  /* ---- Pass 1. Auto-detect ticks per cycle ------------------------------- */
   const tickSet = new Set();
   for (const line of lines) {
     const tm = line.match(/^\s*(\d+):/);
@@ -726,7 +835,7 @@ function parse(text) {
     if (bestDelta > 0) TPC = bestDelta;
   }
 
-  /* ---- Pass 2 — event-by-event extraction --------------------------------- */
+  /* ---- Pass 2. Event-by-event extraction --------------------------------- */
   const fetch1Map     = {};   // lineSeq     -> cycle of MinorLine response
   const fetch1Req     = {};   // lineSeq     -> cycle of "Issued fetch request"
   const fetch1Vaddr   = {};   // lineSeq     -> vaddr base of the fetched line
@@ -737,7 +846,7 @@ function parse(text) {
   const issueOk       = {};   // fetchSeqNum -> "Issuing inst" (FU dispatch) cycle
   const issueFU       = {};   // fetchSeqNum -> FU index
   const scoreboardMap = {};   // fetchSeqNum -> scoreboard returnCycle
-  const branchEvents  = {};   // fetchSeqNum -> {cycle, type}
+  const branchEvents  = {};   // fetchSeqNum -> [{cycle, type, target}, ...] in order
   const discardMap    = {};   // fetchSeqNum -> discard cycle
   const lsqEvents     = {};   // fetchSeqNum -> {pushCycle, issueCycle, completeCycle, isStore?}
   const storeBufEvents = {};  // fetchSeqNum -> {pushCycle, deleteCycle}
@@ -746,6 +855,7 @@ function parse(text) {
   const dcacheByCycle = {};   // cycle -> {miss}
   const commitList    = [];   // {cycle, pc, instr, fu, fetchSeq}
   let observedLineSize = null;   // bytes (from "size=N" in fetch1: MinorLine)
+  const branchPredInfo = {};  // predictor params scraped from branchPred header lines
 
   let hasMinorExecute = false;
 
@@ -753,6 +863,14 @@ function parse(text) {
     const l = line.trim(); if (!l) continue;
     const tm = l.match(/^\s*(\d+):/); if (!tm) continue;
     const cycle = Math.round(parseInt(tm[1]) / TPC);
+
+    /* Branch-predictor header lines (emitted once at tick 0). These give the
+     * predictor geometry that cannot otherwise be inferred from behaviour. */
+    const bp = l.match(/branchPred:\s+(local predictor size|local counter bits|instruction shift amount|index mask|global predictor size|choice predictor size|BTB entries|RAS size):\s+(\S+)/);
+    if (bp) {
+      if (!(bp[1] in branchPredInfo)) branchPredInfo[bp[1]] = bp[2];
+      continue;
+    }
 
     /* Fetch1 line response: "fetch1: MinorLine: id=tid/stream.pred/lineSeq size=N vaddr=0x... ..." */
     const ml = l.match(/fetch1: MinorLine: id=\S+\/\S+\/(\d+)\s+size=(\d+)\s+vaddr=0x([0-9a-f]+)/);
@@ -775,14 +893,14 @@ function parse(text) {
       continue;
     }
 
-    /* L1 ICache access — tracked by cycle (fetch1 issues at most one per cycle). */
+    /* L1 ICache access. Tracked by cycle (fetch1 issues at most one per cycle). */
     const ic = l.match(/l1icaches: access for \w+ \[[0-9a-f]+:[0-9a-f]+\] IF (miss|hit)/);
     if (ic) {
       (ic[1] === 'miss' ? icMissCycles : icHitCycles).add(cycle);
       continue;
     }
 
-    /* L1 DCache access — also tracked by cycle (the LSQ issue cycle matches).
+    /* L1 DCache access. Also tracked by cycle (the LSQ issue cycle matches).
      * We capture the request type (ReadReq / WriteReq / etc.) so the
      * renderer and stats can distinguish a load miss from a store miss. */
     const dc = l.match(/l1dcaches: access for (\w+) \[[0-9a-f]+:[0-9a-f]+\] (miss|hit)/);
@@ -791,7 +909,7 @@ function parse(text) {
       continue;
     }
 
-    /* LSQ state transitions — the request ID embeds fetchSeqNum directly. */
+    /* LSQ state transitions. The request ID embeds fetchSeqNum directly. */
     const ls = l.match(/lsq: Setting state from (\w+) to (\w+) for request: (\S+) pc:/);
     if (ls) {
       const m = ls[3].match(/(\d+)\/\S+\/(\d+)\/(\d+)\.\d+/);
@@ -800,7 +918,7 @@ function parse(text) {
         const ev = (lsqEvents[fseq] ??= {});
         if (ls[1] === 'NotIssued'           && ls[2] === 'InTranslation')   ev.pushCycle     = cycle;
         /* Loads transition to RequestIssuing when the LSQ sends the request
-         * to the cache; stores go through StoreBufferIssuing instead. Treat
+         * to the cache. Stores go through StoreBufferIssuing instead. Treat
          * both as the issue-to-cache cycle so dcache miss matching works
          * for both. ??= keeps the FIRST such cycle if the LSQ retries. */
         if (ls[2] === 'RequestIssuing' || ls[2] === 'StoreBufferIssuing')   ev.issueCycle    ??= cycle;
@@ -810,7 +928,7 @@ function parse(text) {
       continue;
     }
 
-    /* Store buffer — "Considering" is the first ID-tagged event; "Deleting"
+    /* Store buffer. "Considering" is the first ID-tagged event. "Deleting"
      * marks the cycle where the store actually leaves the buffer. */
     const sbc = l.match(/storeBuffer: Considering request: (\S+) pc:/);
     if (sbc) {
@@ -828,7 +946,7 @@ function parse(text) {
       continue;
     }
 
-    /* Fetch2 — bytes are decoded into an instruction. */
+    /* Fetch2. Bytes are decoded into an instruction. */
     const f2m = l.match(/fetch2: decoder inst (\S+) pc:/);
     if (f2m) {
       const m = f2m[1].match(/(\d+)\/\S+\/(\d+)\/(\d+)/);
@@ -839,7 +957,7 @@ function parse(text) {
       continue;
     }
 
-    /* Execute MinorInst — the canonical record for an instruction.
+    /* Execute MinorInst. The canonical record for an instruction.
      * Format: id=tid/stream.pred/lineSeq/fetchSeq.execSeq addr=... inst="..." class=... */
     const mi = l.match(
       /execute: MinorInst: id=\d+\/\S+\/(\d+)\/(\d+)\.\d+\s+addr=(0x[0-9a-f]+)\s+inst="([^"]+)"\s+class=(\w+)\s+flags="([^"]*)"\s+srcRegs=([^ ]*)\s+destRegs=([^ ]*)/
@@ -855,7 +973,7 @@ function parse(text) {
       continue;
     }
 
-    /* Scoreboard "Marking up" — the destination register's returnCycle is the
+    /* Scoreboard "Marking up". The destination register's returnCycle is the
      * earliest cycle the result is forwardable. */
     const sb = l.match(/scoreboard\d+: Marking up inst:\s+(\S+).*returnCycle:\s*(\d+)/);
     if (sb) {
@@ -867,7 +985,7 @@ function parse(text) {
       continue;
     }
 
-    /* Decode — "Passing on inst" is the cycle the instruction leaves Decode. */
+    /* Decode. "Passing on inst" is the cycle the instruction leaves Decode. */
     const dp = l.match(/decode: Passing on inst:\s+(\S+)\s+pc:\s+\S+\s+\([^)]+\)/);
     if (dp) {
       const m = dp[1].match(/(\d+)\/\S+\/(\d+)\/(\d+)/);
@@ -878,7 +996,7 @@ function parse(text) {
       continue;
     }
 
-    /* Execute — "Trying to issue" (first attempt, possibly stalled by scoreboard). */
+    /* Execute. "Trying to issue" (first attempt, possibly stalled by scoreboard). */
     const ti = l.match(/Trying to issue inst:\s+(\S+)\s+pc:\s+(\S+)\s+\(([^)]+)\)\s+to FU:\s*(\d+)/);
     if (ti) {
       const m = ti[1].match(/(\d+)\/\S+\/(\d+)\/(\d+)\.\d+/);
@@ -894,7 +1012,7 @@ function parse(text) {
       continue;
     }
 
-    /* Execute — "Issuing inst" (the cycle the FU is actually dispatched). */
+    /* Execute. "Issuing inst" (the cycle the FU is actually dispatched). */
     const ii = l.match(/Issuing inst:\s+(\S+)\s+pc:\s+(\S+)\s+\(([^)]+)\)\s+into FU (\d+)/);
     if (ii) {
       const m = ii[1].match(/(\d+)\/\S+\/(\d+)\/(\d+)\.\d+/);
@@ -911,21 +1029,21 @@ function parse(text) {
       continue;
     }
 
-    /* Branch — "Changing stream on branch" fires when fetch1 redirects.
+    /* Branch. "Changing stream on branch" fires when fetch1 redirects.
      * Type is one of: UnpredictedBranch, BranchPrediction,
      * CorrectlyPredictedBranch, BadlyPredictedBranch, BadlyPredictedBranchTarget,
      * Interrupt, SuspendThread, HaltFetch. */
-    const br = l.match(/Changing stream on branch: (\w+) target: \S+ (\S+) pc:/);
+    const br = l.match(/Changing stream on branch: (\w+) target: (\S+) (\S+) pc:/);
     if (br) {
-      const m = br[2].match(/(\d+)\/\S+\/(\d+)\/(\d+)\.\d+/);
+      const m = br[3].match(/(\d+)\/\S+\/(\d+)\/(\d+)\.\d+/);
       if (m) {
         const fseq = +m[3];
-        if (!(fseq in branchEvents)) branchEvents[fseq] = { cycle, type: br[1] };
+        (branchEvents[fseq] ??= []).push({ cycle, type: br[1], target: br[2] });
       }
       continue;
     }
 
-    /* Discard — instruction was speculatively in flight when its stream got
+    /* Discard. Instruction was speculatively in flight when its stream got
      * flushed (misprediction or serialize-after redirect). */
     const di = l.match(/execute: Discarding inst: (\S+) pc:/);
     if (di) {
@@ -940,15 +1058,17 @@ function parse(text) {
     /* Commit (T0 line). FetchSeq=N gives an exact instruction identity:
      * a PC discarded once and re-fetched would otherwise have the discarded
      * instance steal the commit cycle from the real one. */
-    const em = l.match(/T0\s+:\s+(0x[0-9a-f]+)\s+@\S+\s+:\s+(.+?)\s+:\s+(\w+).*?FetchSeq=(\d+)/);
+    const em = l.match(/T0\s+:\s+(0x[0-9a-f]+)\s+@\S+\s+:\s+(.+?)\s+:\s+(\w+)(?:.*?FetchSeq=(\d+))?(?:.*?CPSeq=(\d+))?/);
     if (em && l.includes('T0')) {
-      commitList.push({ cycle, pc: em[1], instr: em[2].trim(), fu: em[3], fetchSeq: +em[4] });
+      commitList.push({ cycle, pc: em[1], instr: em[2].trim(), fu: em[3],
+                         fetchSeq: em[4] !== undefined ? +em[4] : undefined,
+                         cpSeq: em[5] !== undefined ? +em[5] : null });
     }
   }
 
   /* ---- Infer forward delays from observed cycle deltas ------------------ */
   /* The minimum gap between consecutive stage timestamps across many
-   * instructions equals the forward delay (the no-stall floor; any extra
+   * instructions equals the forward delay (the no-stall floor. Any extra
    * gap is buffer wait). With too few valid samples, fall back to the
    * gem5 default of 1 cycle. */
   inferForwardDelays(executeMap, fetch1Map, fetch2Map, decodeMap, issueFirst);
@@ -959,11 +1079,13 @@ function parse(text) {
   for (const cm of commitList) {
     if (cm.fetchSeq !== undefined) commitByFetchSeq[cm.fetchSeq] = cm;
   }
-  /* Fallback for traces that omit FetchSeq=: per-PC pairing, but skip
-   * discarded instances so they don't steal a real commit. */
+  /* Fallback for traces that omit FetchSeq=: per-PC pairing. Store the
+   * commit-entry references (not bare cycles) so a commit claimed by a
+   * FetchSeq match can be marked and the fallback will not reuse it,
+   * keeping the two paths from desyncing on mixed traces. */
   const commitByPC = {};
-  for (const cm of commitList) (commitByPC[cm.pc] ??= []).push(cm.cycle);
-  const usedIdx = {};
+  for (const cm of commitList) (commitByPC[cm.pc] ??= []).push(cm);
+  const pcPtr = {};
 
   allInstrs = Object.entries(executeMap)
     .sort(([a], [b]) => a - b)
@@ -977,7 +1099,7 @@ function parse(text) {
       const retCyc = scoreboardMap[seq]    ?? null;
       const decReal = decodeMap[seq]       ?? null;
 
-      /* Prefer real cycles; estimate the rest from neighbors using
+      /* Prefer real cycles. Estimate the rest from neighbors using
        * pipeline forward delays. */
       const f2est   = f1c    !== null ? f1c    + PIPE_F1_F2  : null;
       const f2Final = f2real ?? f2est;
@@ -990,32 +1112,55 @@ function parse(text) {
       const f1F  = f1c     ?? (f2F     - PIPE_F1_F2);
       const dtoF = decF + PIPE_DEC_EX;
 
-      /* Commit cycle: try fetch-seq match; on miss (and if not discarded),
-       * fall back to the per-PC pair. */
-      let cmc = commitByFetchSeq[seq]?.cycle ?? null;
+      /* Commit cycle: prefer the exact FetchSeq match and claim that
+       * commit so the per-PC fallback cannot reuse it. On miss (and if
+       * not discarded), take the next unclaimed commit for this PC. */
+      const cmEntry = commitByFetchSeq[seq] ?? null;
+      let cmc, cpSeq;
       const isDiscarded = (seq in discardMap);
-      if (cmc === null && !isDiscarded) {
-        const pcs = commitByPC[ex.pc] ?? [];
-        const ui  = usedIdx[ex.pc] ?? 0;
-        usedIdx[ex.pc] = ui + 1;
-        cmc = pcs[ui] ?? null;
+      if (cmEntry) {
+        cmc = cmEntry.cycle;
+        cpSeq = cmEntry.cpSeq ?? null;
+        cmEntry._used = true;
+      } else {
+        cmc = null;
+        cpSeq = null;
+        if (!isDiscarded) {
+          const pool = commitByPC[ex.pc] ?? [];
+          let p = pcPtr[ex.pc] ?? 0;
+          while (p < pool.length && pool[p]._used) p++;
+          if (p < pool.length) {
+            cmc   = pool[p].cycle;
+            cpSeq = pool[p].cpSeq ?? null;
+            pool[p]._used = true;
+            p++;
+          }
+          pcPtr[ex.pc] = p;
+        }
       }
 
       const exFU   = issC ?? ex.cycle;
-      const fuDone = retCyc ?? (exFU + 1);
+      /* retCyc comes from the scoreboard "Marking up ... returnCycle" line,
+       * which only exists for instructions that write a register. Branches
+       * and stores have no destination register, so there is no scoreboard
+       * entry and retCyc is null. Such an instruction is NOT done early and
+       * then waiting to commit, it occupies the FU until it resolves and
+       * commits. Falling back to commit (not issue+1) avoids drawing a
+       * phantom commit-wait segment after every branch. */
+      const fuDone = retCyc ?? (cmc ?? (exFU + 1));
 
       let fetchReqCyc = fetch1Req[ex.lineSeq] ?? null;
       let icMiss = fetchReqCyc !== null ? icMissCycles.has(fetchReqCyc) : null;
 
       /* Line-wrapping 32-bit instruction detection.
        *
-       * MinorCPU's Fetch1 issues one line request per line; Fetch2 then
+       * MinorCPU's Fetch1 issues one line request per line. Fetch2 then
        * decodes one instruction per cycle. A 32-bit instruction whose start
        * address sits within (lineSize-4) bytes of the end of its line has
        * its low half in one line and its high half in the next. gem5
        * handles this by preserving the decoder's partial state across line
-       * pops — see the comment at fetch2.cc:520 ("keep PC in case this is
-       * a line-wrapping inst") — and attributes the resulting MinorDynInst
+       * pops. See the comment at fetch2.cc:520 ("keep PC in case this is
+       * a line-wrapping inst"). And attributes the resulting MinorDynInst
        * to whichever line was current when decoding completed (the HIGH-
        * HALF line). The trace therefore tags such an instruction with that
        * single line's seq number, and the viewer, keying off it, would
@@ -1038,7 +1183,7 @@ function parse(text) {
        * ANY power-of-2 fetch1LineWidth that gem5 lets you set (4, 8, 16,
        * 32, 64, 128 bytes ...), since the bit-test below is config-free.
        * The fetch1FetchLimit (how many lines can be in flight at once)
-       * doesn't change the per-instruction wrap test either — it only
+       * doesn't change the per-instruction wrap test either. It only
        * changes how interleaved the lineSeqs are in the trace, which is
        * why we scan a generous window backward when matching the prev
        * line by vaddr. */
@@ -1070,7 +1215,7 @@ function parse(text) {
               if (prevReq !== null) {
                 wrapsLine = true;
                 /* Per-line miss status.  Each line's fetch is independently
-                 * a hit or a miss; the wrapping instruction is "miss-affected"
+                 * a hit or a miss. The wrapping instruction is "miss-affected"
                  * if EITHER line missed. */
                 f1reqA  = prevReq;
                 f1respA = prevResp;
@@ -1099,21 +1244,65 @@ function parse(text) {
         if (dc) { dcMiss = dc.miss; dcMissIsStore = dc.isWrite ?? null; }
       }
 
-      /* Branch outcome — only meaningful for actual control instructions
-       * that committed:
-       *   UnpredictedBranch / Badly*  -> mispredict (pipeline flushed)
-       *   BranchPrediction / Correctly* -> predicted right
-       *   non-control or discarded    -> null */
+      /* Branch model. Only meaningful for committed control instructions.
+       * Three independent facts are recorded so the viewer can show the
+       * full picture rather than a single mispredict bit:
+       *   - predicted: what the predictor said (predictedTaken flag)
+       *   - actual:    what the branch finally did.
+       *   - caughtAt:  which stage produced the LAST redirect for this
+       *                seq. A branch can be predicted taken at Fetch2
+       *                (BranchPrediction) and then corrected at Execute
+       *                (BadlyPredictedBranch / UnpredictedBranch). The
+       *                final event is the decisive one. BranchPrediction
+       *                as the only/last event is a Fetch2 redirect
+       *                (correctly predicted taken). UnpredictedBranch and
+       *                Badly* as the last event mean the core discovered
+       *                the misprediction at Execute.
+       * non-control or discarded -> all null. */
+      const brEvs  = branchEvents[seq] ?? null;
+      const brLast = brEvs ? brEvs[brEvs.length - 1] : null;
+      const brType = brLast?.type ?? null;
+      const isCond = ex.flags?.includes('IsCondControl');
+      const isCtrl = ex.flags?.includes('IsControl');
+      const isCondCorrectNT = !isDiscarded && isCtrl && isCond && brType === null;
       const branchOutcome = (() => {
-        if (isDiscarded) return null;
-        if (!ex.flags?.includes('IsControl')) return null;
-        const t = branchEvents[seq]?.type;
-        if (t === 'UnpredictedBranch' || (t && t.startsWith('Badly'))) return 'mispred';
-        return 'correct';
+        if (isDiscarded || !isCtrl) return null;
+        if (brType === null) return isCondCorrectNT ? 'correct' : null;
+        if (brType === 'UnpredictedBranch' || brType.startsWith('Badly')) return 'mispred';
+        return 'correct';                       // BranchPrediction / CorrectlyPredictedBranch
       })();
+      const branchActualTaken = (() => {
+        if (isDiscarded || !isCtrl) return null;
+        if (!isCond) return true;               // jal / jr / return always taken
+        if (brType === null) return false;      // no redirect at all -> fell through
+        /* BadlyPredictedBranch = predicted taken but Execute found it
+         * should fall through -> actually NOT taken. Every other redirect
+         * type means control left the fall-through -> taken. */
+        if (brType === 'BadlyPredictedBranch') return false;
+        return true;
+      })();
+      const branchCaughtAt = (() => {
+        if (isDiscarded || !isCtrl) return null;
+        if (brType === null) return isCondCorrectNT ? 'fetch2' : null;
+        if (brType === 'BranchPrediction' || brType === 'CorrectlyPredictedBranch')
+          return 'fetch2';                      // shallow, predicted
+        return 'execute';                       // deep flush, discovered at Execute
+      })();
+      /* Resolve cycle = the cycle of the decisive (last) redirect: the
+       * Fetch2 prediction for a clean predicted-taken branch, or the
+       * Execute correction for a mispredict. */
+      const branchResolveCyc = brLast?.cycle ?? null;
+      /* A non-control instruction that committed and still forced a
+       * stream change is a serialization (IsSerializeAfter), not a
+       * branch. gem5 emits its post-commit refetch as an
+       * UnpredictedBranch to the next sequential PC. */
+      const serializeAfter = !isDiscarded && !isCtrl && brType !== null &&
+                             /Serialize/.test(ex.flags || '');
 
       return {
         seq,  pc: ex.pc,  instr: ex.instr,  fu: ex.fu,
+        compressed: /^c[_.]/.test(ex.instr || ''),
+        cpSeq,
         src: ex.src,  dest: ex.dest,  flags: ex.flags,
         fuIdx,  lineSeq: ex.lineSeq,
         f1req: fetchReqCyc,  // fetch1 request issued (icache access cycle)
@@ -1137,13 +1326,16 @@ function parse(text) {
         dcMissIsStore,
         sbPush:   sbEvt?.pushCycle   ?? null,
         sbDelete: sbEvt?.deleteCycle ?? null,
-        branchType:  branchEvents[seq]?.type  ?? null,
-        flushCycle:  branchEvents[seq]?.cycle ?? null,
+        branchType:  brType,
+        flushCycle:  branchResolveCyc,
         flushed:     isDiscarded,
         flushedCycle: discardMap[seq] ?? null,
         isControl:   ex.flags.includes('IsControl'),
         predictedTaken: ex.predictedTaken ?? false,
         branchOutcome,
+        branchActualTaken,
+        branchCaughtAt,
+        serializeAfter,
         estimated: decReal === null && f1c === null && f2real === null,
         /* Internal flags so the tooltip can mark estimated cycles with "~". */
         _real_f1: f1c, _real_f2: f2real, _real_dec: decReal,
@@ -1152,7 +1344,7 @@ function parse(text) {
       };
     });
 
-  /* MinorExecute-only traces don't carry mnemonics on the issue lines — pull
+  /* MinorExecute-only traces don't carry mnemonics on the issue lines. Pull
    * them from the matching commit lines (paired by PC, in order). */
   if (hasMinorExecute && allInstrs.length > 0) {
     const enrichByPC = {};
@@ -1182,7 +1374,7 @@ function parse(text) {
     return;
   }
 
-  /* Forwarding edges.  Walk allInstrs in fetch order; for each instruction
+  /* Forwarding edges.  Walk allInstrs in fetch order. For each instruction
    * record the last producer of every register it reads, and remember
    * itself as the new producer for whatever register it writes. Stored as
    * an array on the consumer (ins._fwdFrom = [{ prodSeq, reg }, ...]) so
@@ -1192,24 +1384,114 @@ function parse(text) {
   {
     const lastProducer = {};
     for (const ins of allInstrs) {
-      const srcs = (ins.src || '').split(',').map(s => s.trim()).filter(s => s && s !== '—');
+      const srcs = (ins.src || '').split(',').map(s => s.trim()).filter(s => s && s !== '-');
       for (const r of srcs) {
         const prodSeq = lastProducer[r];
         if (prodSeq !== undefined && prodSeq !== ins.seq)
           (ins._fwdFrom ??= []).push({ prodSeq, reg: r });
       }
-      const dests = (ins.dest || '').split(',').map(s => s.trim()).filter(s => s && s !== '—');
+      const dests = (ins.dest || '').split(',').map(s => s.trim()).filter(s => s && s !== '-');
       for (const r of dests) lastProducer[r] = ins.seq;
+    }
+  }
+
+  /* Branch-bubble attribution. EVERY taken branch leaves a bubble before
+   * the resuming instruction can be fetched, because the redirect target
+   * still has to walk the front end. The bubble now spans from the cycle
+   * the redirect is realised to the start of the resuming instruction's
+   * fetch (its f1req), and it is attached to the RESUMING instruction so
+   * it can be drawn on that instruction's own row, in the empty band
+   * before its fe1, not on the branch row.
+   *   - correctly predicted taken: redirect realised at Fetch2 (the
+   *     BranchPrediction stream change), small bubble, little/no squash.
+   *   - mispredicted: redirect realised at Execute (the UnpredictedBranch
+   *     stream change, i.e. when the core discovers it mispredicted),
+   *     larger bubble, whole wrong path squashed. If the speculative
+   *     wrong-path fetch of the target missed the I-cache, Fetch1 had to
+   *     drain that outstanding miss first, so the bubble is much larger.
+   *     The corrected fetch itself then HITS (the miss already filled the
+   *     line), so the resuming instruction's own icMiss is the wrong
+   *     signal. The honest test is whether any I-cache miss was serviced
+   *     anywhere across the bubble window.
+   * The branch's flushCycle is the cycle of its "Changing stream" line,
+   * which is exactly the Fetch2 redirect cycle for a predicted-taken
+   * branch and the Execute redirect cycle for a mispredict. A correctly
+   * predicted NOT-taken branch has no bubble (fall-through continues). */
+  {
+    const committedAll = allInstrs.filter(i => !i.flushed && i.cm !== null);
+    const seqMap = new Map();
+    for (const i of allInstrs) seqMap.set(i.seq, i);
+    /* Primary: the literal order of commit (T0) lines in the trace.
+     * commitList was built by the forward scan, so it already is the
+     * exact in-order commit sequence. The instruction that commits right
+     * after a branch is simply the next entry. This needs only fetchSeq
+     * as a per-instruction identity and is immune to CPSeq resets (which
+     * happen across ROIs/checkpoints in long traces) and to commit-cycle
+     * collisions. */
+    const posInCommit = new Map();
+    for (let idx = 0; idx < commitList.length; idx++) {
+      const fs = commitList[idx].fetchSeq;
+      if (fs !== undefined && !posInCommit.has(fs)) posInCommit.set(fs, idx);
+    }
+    const haveCommitOrder = commitList.length > 0;
+    /* Fallback only for traces with no commit lines: commit-cycle order. */
+    const cmOrder = committedAll
+      .slice()
+      .sort((a, b) => (a.cm - b.cm) || (a.seq - b.seq));
+    const idxBySeq = new Map();
+    cmOrder.forEach((i, k) => idxBySeq.set(i.seq, k));
+    const missCyclesSorted = [...icMissCycles].sort((a, b) => a - b);
+    const missInWindow = (lo, hi) => {
+      for (const c of missCyclesSorted) { if (c > hi) break; if (c >= lo) return true; }
+      return false;
+    };
+    for (const ins of allInstrs) {
+      const isBr  = !!ins.branchOutcome;
+      const isSer = !isBr && ins.serializeAfter;   // M5Op-style flush
+      if (!isBr && !isSer) continue;               // no redirect -> no bubble
+      const isMis = ins.branchOutcome === 'mispred';
+      let next = null;
+      if (haveCommitOrder) {
+        const idx = posInCommit.get(ins.seq);
+        if (idx != null && idx + 1 < commitList.length) {
+          /* Exactly the next committed instruction. If it has no parsed
+           * record, leave next null (no bubble) rather than attributing
+           * the gap to a later instruction. */
+          next = seqMap.get(commitList[idx + 1].fetchSeq) ?? null;
+        }
+      } else {
+        const k = idxBySeq.get(ins.seq);
+        if (k != null && k + 1 < cmOrder.length) next = cmOrder[k + 1];
+      }
+      if (!next) continue;
+      const start = ins.flushCycle;              // decisive resolve/redirect cycle
+      const end   = next.f1req;                  // start of resuming fetch
+      if (start == null || end == null) continue;
+      const gap     = Math.max(0, end - start);
+      const hadMiss = isMis && gap > 0 && missInWindow(start, end);
+      const kind = isSer  ? 'serialize'
+                 : !isMis ? 'taken'
+                 : hadMiss ? 'refillmiss'
+                 :           'refill';
+      /* Attach to the resuming instruction (drawn on its row). Store only
+       * the rebase-invariant gap length. The draw reconstructs the span
+       * from the resuming instruction's own (rebased) f1req. */
+      next._bubble = { gap, kind, branchSeq: ins.seq };
+      /* Keep a back-reference on the branch for its own tooltip. */
+      ins.recoverySeq     = next.seq;
+      ins.recoveryGap     = gap;
+      ins.recoveryHadMiss = hadMiss;
+      ins.bubbleKind      = kind;
     }
   }
 
   /* Surface the available fetch-number range as input placeholders, and
    * clear any stale filter from a previous file load. */
   computePipelineStats();
-  inferredConfig = computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle);
+  inferredConfig = computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle, branchPredInfo, allInstrs);
   renderConfigPanel();
   const seqs   = allInstrs.map(i => i.seq);
-  const minSeq = Math.min(...seqs), maxSeq = Math.max(...seqs);
+  const minSeq = arrMin(seqs, 0), maxSeq = arrMax(seqs, 0);
   const rfromEl = document.getElementById('rfrom');
   const rtoEl   = document.getElementById('rto');
   rfromEl.placeholder = String(minSeq);
@@ -1225,6 +1507,8 @@ function parse(text) {
 
   scrollX = 0; scrollY = 0;
   setupScrollers();
+  const scroller0 = document.getElementById('scroller');
+  if (scroller0) { scroller0.scrollLeft = 0; scroller0.scrollTop = 0; }
   redraw();
 }
 
@@ -1239,15 +1523,15 @@ function parse(text) {
  * ========================================================================== */
 let inferredConfig = { sections: [] };
 
-function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle) {
+function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle, branchPredInfo, allInstrs) {
   const cfg = { sections: [] };
 
   /* ---- Simulation-level statistics ---- */
   const numInst   = allInstrs.length;
   const cmCycs    = allInstrs.filter(i => i.cm !== null).map(i => i.cm);
   const f1Cycs    = allInstrs.filter(i => i.f1 !== null).map(i => i.f1);
-  const minCyc    = f1Cycs.length ? Math.min(...f1Cycs) : 0;
-  const maxCyc    = cmCycs.length ? Math.max(...cmCycs) : 0;
+  const minCyc    = f1Cycs.length ? arrMin(f1Cycs, 0) : 0;
+  const maxCyc    = cmCycs.length ? arrMax(cmCycs, 0) : 0;
   const totalCyc  = Math.max(0, maxCyc - minCyc + 1);
   const ipc       = totalCyc > 0 ? (cmCycs.length / totalCyc) : 0;
   const flushed   = allInstrs.filter(i => i.flushed).length;
@@ -1335,7 +1619,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
   const execBufObs = maxOccupancy(execBufIntervals);
 
   cfg.sections.push({
-    title: 'Inter-stage buffers (observed maxima — true value ≥ shown)',
+    title: 'Inter-stage buffers (observed maxima. True value ≥ shown)',
     rows: [
       ['fetch2InputBufferSize', `≥ ${f2BufObs} lines`, 'max simultaneous lines resident in F2 input buffer'],
       ['decodeInputBufferSize', `≥ ${decBufObs}`,      'max instructions in Decode input buffer at any cycle'],
@@ -1359,7 +1643,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
   const isMem = ins => /Mem|FloatMem|SimdUnitStride|SimdStrided|SimdIndexed|SimdWholeReg/.test(ins.fu || '');
 
   cfg.sections.push({
-    title: 'Issue / commit widths (observed maxima — true value ≥ shown)',
+    title: 'Issue / commit widths (observed maxima. True value ≥ shown)',
     rows: [
       ['executeIssueLimit',        `≥ ${maxPerCycle('ex')}`,              'max instructions issued to FUs in same cycle'],
       ['executeMemoryIssueLimit',  `≥ ${maxPerCycle('ex', isMem)}`,        'max memory ops issued in same cycle'],
@@ -1388,7 +1672,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
     let opLat = 0, best = 0;
     for (const l in latCount) if (latCount[l] > best) { best = latCount[l]; opLat = +l; }
     /* issueLat: the minimum positive gap between consecutive issue cycles to
-     * the same FU. With pipelined FUs this is 1; with serial FUs it equals
+     * the same FU. With pipelined FUs this is 1. With serial FUs it equals
      * the operation latency. */
     const sortedIssues = [...data.issues].sort((a, b) => a - b);
     let minGap = Infinity;
@@ -1411,7 +1695,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
   }
 
   /* ---- Cache subsystem ----
-   * Count TOTAL miss events, not "instructions that hit a miss" — multiple
+   * Count TOTAL miss events, not "instructions that hit a miss". Multiple
    * misses can happen in a single cycle (e.g. across MSHRs), and a single
    * miss event can affect more than one instruction. icMissCycles /
    * dcacheByCycle are keyed by cycle and effectively count miss-emitting
@@ -1430,7 +1714,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
    * accesses the trace explicitly recorded as a hit. This is the cache hit
    * latency as gem5 actually models it: max(tag_latency, data_latency) under
    * parallel access (response_latency is NEGLECTED on hits, see
-   * BaseCache::handleTimingReqHit in base.cc; it only contributes on miss
+   * BaseCache::handleTimingReqHit in base.cc. It only contributes on miss
    * fills). For CARLA's tag=1, data=1, sequential_access=False, this
    * settles at 1 cycle for both caches in steady state. */
   let icHitMin = Infinity, icHitSamples = 0;
@@ -1449,7 +1733,7 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
     }
   }
   const fmtLat = (g, n) => g === Infinity
-    ? '—'
+    ? '-'
     : `${g} cycle${g === 1 ? '' : 's'}`;
   const fmtSamples = n => n > 0 ? `minimum across ${n} observed hit${n === 1 ? '' : 's'}` : 'no hits observed';
 
@@ -1464,20 +1748,46 @@ function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCyc
   });
 
   /* ---- Branch prediction ---- */
-  let totalBr = 0, mispred = 0;
+  let totalBr = 0, mispred = 0, predicted = 0;
+  let taken = 0, notTaken = 0, caughtF2 = 0, caughtEx = 0;
+  let recoveryMiss = 0;
   for (const ins of allInstrs) {
-    if (ins.branchOutcome) {
-      totalBr++;
-      if (ins.branchOutcome === 'mispred') mispred++;
-    }
+    if (!ins.branchOutcome) continue;
+    totalBr++;
+    if (ins.branchOutcome === 'mispred') { mispred++; if (ins.recoveryHadMiss) recoveryMiss++; }
+    else predicted++;
+    if (ins.branchActualTaken === false) notTaken++; else taken++;
+    if (ins.branchCaughtAt === 'fetch2') caughtF2++;
+    else if (ins.branchCaughtAt === 'execute') caughtEx++;
   }
   const accuracy = totalBr > 0 ? `${((1 - mispred / totalBr) * 100).toFixed(1)}%` : 'n/a';
+
+  const bpRows = [];
+  const bpMap = [
+    ['local predictor size',     'local predictor entries'],
+    ['local counter bits',       'saturating-counter width per entry'],
+    ['global predictor size',    'global predictor entries'],
+    ['choice predictor size',    'choice (meta) predictor entries'],
+    ['index mask',               'index mask applied to the PC'],
+    ['instruction shift amount', 'low PC bits dropped before indexing'],
+    ['BTB entries',              'branch target buffer entries'],
+    ['RAS size',                 'return address stack depth'],
+  ];
+  for (const [k, note] of bpMap)
+    if (k in branchPredInfo) bpRows.push([k, branchPredInfo[k], note]);
+  if (bpRows.length)
+    cfg.sections.push({ title: 'Branch predictor (from trace header)', rows: bpRows });
+
   cfg.sections.push({
-    title: 'Branch prediction',
+    title: 'Branch behaviour (observed)',
     rows: [
-      ['total branches',     `${totalBr}`,  'committed control instructions with a resolution event'],
-      ['mispredictions',     `${mispred}`,  'includes UnpredictedBranch (for pseudo-ops like m5_*)'],
-      ['prediction accuracy', accuracy,     ''],
+      ['total branches',      `${totalBr}`,   'committed control instructions with a resolution event'],
+      ['predicted correctly', `${predicted}`, 'resolved without a deep flush'],
+      ['mispredictions',      `${mispred}`,   'resolved at Execute, full front-end flush + refill'],
+      ['prediction accuracy', accuracy,       ''],
+      ['taken / not taken',   `${taken} / ${notTaken}`, 'actual direction at resolution'],
+      ['resolved at Fetch2 / Execute', `${caughtF2} / ${caughtEx}`, 'Fetch2 = shallow squash, Execute = deep flush'],
+      ['mispredicts whose bubble includes an I-cache miss', `${recoveryMiss}`, 'oversized gaps: Fetch1 was blocked draining a missed speculative target fetch before it could re-steer, on top of the refill depth'],
     ],
   });
 
@@ -1510,7 +1820,7 @@ function toggleConfigPanel() {
 /* Infer the three forward-delay constants from observed cycle deltas.
  * For each pair of consecutive stages, take the minimum delta across all
  * instructions where both endpoints are real (not estimated). Clamp to
- * a sane range and require at least 4 samples; otherwise keep the
+ * a sane range and require at least 4 samples. Otherwise keep the
  * existing default. Updates PIPE_F1_F2, PIPE_F2_DEC, PIPE_DEC_EX in place
  * and reflects the result in the top-bar "Pipeline" indicator. */
 function inferForwardDelays(executeMap, fetch1Map, fetch2Map, decodeMap, issueFirst) {
@@ -1531,7 +1841,7 @@ function inferForwardDelays(executeMap, fetch1Map, fetch2Map, decodeMap, issueFi
   const pick = (deltas, fallback) => {
     const valid = deltas.filter(d => d >= 1 && d <= 16);
     if (valid.length < 4) return fallback;
-    return Math.min(...valid);
+    return arrMin(valid, fallback);
   };
   /* Reset to gem5 defaults before inference, otherwise a second trace load
    * would use the previous trace's inferred values as the fallback. */
@@ -1548,14 +1858,14 @@ function inferForwardDelays(executeMap, fetch1Map, fetch2Map, decodeMap, issueFi
       `  fetch1ToFetch2ForwardDelay  = ${PIPE_F1_F2}\n` +
       `  fetch2ToDecodeForwardDelay  = ${PIPE_F2_DEC}\n` +
       `  decodeToExecuteForwardDelay = ${PIPE_DEC_EX}\n\n` +
-      `gem5 does not emit these in the trace; the viewer infers them ` +
+      `gem5 does not emit these in the trace. The viewer infers them ` +
       `from the minimum observed gap between consecutive stage timestamps.`;
   }
   console.log(`[gem5-viewer] inferred forward delays: F1->F2=${PIPE_F1_F2} F2->Dec=${PIPE_F2_DEC} Dec->Ex=${PIPE_DEC_EX}`);
 }
 
 /* ============================================================================
- * SECTION 5 — Filter & cycle rebase
+ * SECTION 5 - Filter & cycle rebase
  *
  * The renderer is cycle-agnostic: hand it pre-shifted records when the
  * range filter is active. allInstrs is never mutated.
@@ -1582,7 +1892,7 @@ function applyFilter() {
    *
    * f1req is now ALWAYS the start of the Fetch1 bar (the bar spans the closed
    * interval [f1req, f1]). So whenever f1req is present we count it toward
-   * the min — there is no separate "stall-only" carve-out anymore. */
+   * the min. There is no separate "stall-only" carve-out anymore. */
   const f1ReqVisible = ins => ins.f1req !== null && ins.f1 !== null;
 
   let offset = 0;
@@ -1640,9 +1950,9 @@ function applyFilter() {
  * Goal: make it impossible to enter anything other than a valid in-range
  * fetch number, with feedback at the keystroke level (NOT just on blur).
  * The three handlers cover the three ways characters can land in an input:
- *   onkeydown — typing a key
- *   onpaste   — pasting from the clipboard
- *   oninput   — anything else (drop, programmatic, autofill, IME)
+ *   onkeydown. Typing a key
+ *   onpaste. Pasting from the clipboard
+ *   oninput. Anything else (drop, programmatic, autofill, IME)
  * The browser's own type=number sanitisation handles a lot of this for
  * us, but it varies across browsers, so we belt-and-braces it. */
 function onRangeKeyDown(ev) {
@@ -1678,7 +1988,7 @@ function onRangeChange() {
   if (!allInstrs.length) return;
   /* Sanitise the two inputs against the actual fetch-seq range available
    * in this trace.  type=number + min/max attributes catch the obvious
-   * cases at typing time; this is the belt-and-braces clamp for anything
+   * cases at typing time. This is the belt-and-braces clamp for anything
    * that slipped through (paste, programmatic change, browsers that do
    * not honour min/max strictly, etc.). */
   const rfromEl = document.getElementById('rfrom');
@@ -1695,7 +2005,7 @@ function onRangeChange() {
   };
   clamp(rfromEl);
   clamp(rtoEl);
-  /* If both are present and inverted, swap rather than reject — keeps the
+  /* If both are present and inverted, swap rather than reject. Keeps the
    * user's two values without forcing them to re-enter. */
   if (rfromEl.value !== '' && rtoEl.value !== '' && +rfromEl.value > +rtoEl.value)
     [rfromEl.value, rtoEl.value] = [rtoEl.value, rfromEl.value];
@@ -1715,7 +2025,7 @@ function resetRange() {
 }
 
 /* ============================================================================
- * SECTION 6 — Live summary stats
+ * SECTION 6 - Live summary stats
  * ========================================================================== */
 function updateStats() {
   let nCommit = 0, nFlush = 0, nMisp = 0, nBr = 0;
@@ -1729,7 +2039,7 @@ function updateStats() {
     if (i.isControl)           nBr++;
     /* Cache miss counters are EVENT counts (deduped by the cycle of the
      * triggering request). Two instructions sharing the same cache line
-     * count as one miss event — that's what gem5 actually reports as a
+     * count as one miss event. That's what gem5 actually reports as a
      * miss in the cache hierarchy. */
     if (i.icMiss === true && i.f1req !== null) icMissSet.add(i.f1req);
     if (i.dcMiss === true && i.memIssue !== null) {
@@ -1739,7 +2049,7 @@ function updateStats() {
   }
   const nFetch = vis.length;
   const span = (cMax > cMin) ? (cMax - cMin + 1) : 0;
-  const ipc  = (span > 0) ? (nCommit / span).toFixed(2) : '—';
+  const ipc  = (span > 0) ? (nCommit / span).toFixed(2) : '-';
 
   /* Real wall-clock time across the visible window.
    *   simulated frequency = 1 / (TPC × tick_resolution)
@@ -1769,11 +2079,11 @@ function updateStats() {
 }
 
 /* Auto-scale a duration given in NANOSECONDS to ns / µs / ms / s. Picoseconds
- * are intentionally absent — at any realistic CPU frequency the cycle period
+ * are intentionally absent. At any realistic CPU frequency the cycle period
  * itself is at least a fraction of a ns, so "ps" was misleading as a primary
  * unit and read like the processor was running at picosecond speeds. */
 function fmtTime(ns) {
-  if (!Number.isFinite(ns) || ns <= 0) return '—';
+  if (!Number.isFinite(ns) || ns <= 0) return '-';
   if (ns < 1e3) return `${ns.toFixed(ns < 10 ? 3 : 2)} ns`;
   if (ns < 1e6) return `${(ns / 1e3).toFixed(2)} µs`;
   if (ns < 1e9) return `${(ns / 1e6).toFixed(2)} ms`;
@@ -1781,40 +2091,41 @@ function fmtTime(ns) {
 }
 
 /* ============================================================================
- * SECTION 7 — Dynamic legend
+ * SECTION 7 - Dynamic legend
  * ========================================================================== */
 function buildLegend() {
   const STAGES = [
-    { key:'f1',      label:'Fetch1',          color: COL.f1,      desc:'A cycle the line is held by Fetch1. Both the request cycle and the response cycle are fe1 — a clean hit shows up as 2 blue cells. On a miss the request and response cells are STILL blue (the line is still in Fetch1 those cycles); only the cycles spent waiting for the cache fill are coloured separately. With the CARLA cache config gem5\'s hit latency is max(tag,data) = 1 cycle (response_latency is neglected on hits, see BaseCache::handleTimingReqHit). For a 32-bit instruction that wraps two lines, two separate fe1 segments are drawn, one per line, each according to that line\'s own hit/miss status.' },
-    { key:'f1miss',  label:'IC marker',       color: COL.f1miss,  desc:'A thin red strip pinned to the top of the request cell of a miss bar. It marks the cycle the miss was reported, not the colour of the request cell itself — the cell underneath is plain fe1.' },
-    { key:'f1stall', label:'ICache stall',    color: COL.f1stall, desc:'Middle cells of a miss bar — Fetch1 is blocked waiting for the cache fill to come back from below. MinorCPU has no separate ICache stage, so the instruction stays in Fetch1 the entire time. Count of stall cells equals the miss penalty minus 1 (the response cell at the right edge is fe1, not stall).' },
-    { key:'feStall', label:'Front-end stall', color: COL.feStall, desc:'Gap between the two line fetches of a line-wrapping instruction. After the earlier line arrives, the instruction\'s low half is buffered in the decoder and the inst is effectively waiting in the front end while Fetch1 issues the request for the later line. Only appears on wrapping instructions.' },
-    { key:'f2buf',   label:'Fetch2 input buf',    color: COL.f2buf,   desc:'Instruction queued in the Fetch2 input buffer. Two non-obvious points: (1) buffer size (fetch2InputBufferSize) is in cache lines of fetch1LineWidth bytes, NOT instructions — two RVC instructions packed into one 4-byte line share a single slot but appear as two rows. (2) Fetch1 reserves a slot at request issue time (not arrival) and releases it when Fetch2 pops the line, so a line holds its slot for AT LEAST 2 cycles. With size=N, the largest queue you can build up is N-1 ready lines plus 1 reservation in flight. Buffers sized for N lines effectively act like N-1 in steady state when Fetch2 is fast.' },
-    { key:'f2',      label:'Fetch2',          color: COL.f2,      desc:'Fetch2 decodes raw bytes into an instruction (1 cycle)' },
-    { key:'decbuf',  label:'Dec input buf',   color: COL.decbuf,  desc:'Instruction queued in the Decode input buffer (decodeInputBufferSize)' },
-    { key:'dec',     label:'Decode',          color: COL.dec,     desc:'Decode splits macro-ops and assigns execSeqNum (1 cycle)' },
-    { key:'dtoe',    label:'dToE transit',    color: COL.dtoe,    desc:'Decode→Execute latch (only visible when decodeToExecuteForwardDelay > 1)' },
-    { key:'exbuf',   label:'Exec input buf',  color: COL.exbuf,   desc:'In Execute input buffer waiting for FU and/or operand readiness (scoreboard)' },
-    { key:'int',     label:'Execute Int',     color: COL.int,     desc:'Execution on the integer FU (opLat cycles)' },
-    { key:'branch',  label:'Execute Branch',  color: COL.branch,  desc:'Execution of a branch instruction (jal, jalr, blt, beq, …)' },
-    { key:'fp',      label:'Execute FP',      color: COL.fp,      desc:'Execution on a floating-point FU (opLat cycles)' },
-    { key:'vec',     label:'Execute Vector',  color: COL.vec,     desc:'Execution of a vector / SIMD / matrix instruction (RVV, custom Simd* or matrix opclasses)' },
-    { key:'atomic',  label:'Execute Atomic',  color: COL.atomic,  desc:'Execution of an atomic memory instruction (lr/sc/amo*)' },
-    { key:'mem',     label:'Execute Mem',     color: COL.mem,     desc:'Execution on the memory FU — load/store dispatch' },
-    { key:'memreq',  label:'Mem request',     color: COL.memreq,  desc:'Load/store in flight: LSQ → DCache → response' },
-    { key:'dcmiss',  label:'DCache miss',     color: COL.dcmiss,  desc:'Cycle in which an L1 DCache miss occurred. The bar label distinguishes the kind of miss: "ld✗" for load misses (ReadReq), "st✗" for store misses (WriteReq). Both are counted toward the L1 DCache miss totals in the Cache subsystem panel.' },
-    { key:'sbbuf',   label:'Store buffer',    color: COL.sbbuf,   desc:'Store waiting in the store buffer until written to DCache' },
-    { key:'flush',   label:'Misprediction',   color: '#ff4040',   desc:'Branch unpredicted or mispredicted — pipeline flush + redirect' },
-    { key:'correct', label:'Predicted OK',    color: '#40c0ff',   desc:'Branch predicted correctly — no flush penalty' },
-    { key:'flushed', label:'Flushed instr',   color: COL.flushed, desc:'Speculative instruction discarded after a misprediction' },
-    { key:'wb',      label:'Commit wait',     color: COL.wb,      desc:'Completed instruction waiting for in-order commit (older instructions still in the FU)' },
-    { key:'wrap',    label:'Wrap marker (↪)', color: '#f0a030',   desc:'Amber ↪ glyph in the label column next to a 32-bit RISC-V instruction whose two halves were fetched from different cache lines (a misaligned instruction). The Fetch1 bar for such an instruction is split into TWO sub-segments, one per line, each rendered according to that line\'s own hit/miss status; any gap between the two line fetches is filled with the "Front-end stall" colour. The detection is purely PC-based and works for ANY power-of-2 fetch1LineWidth that gem5 allows (4, 8, 16, 32, 64, 128 bytes) and for any value of fetch1FetchLimit.' },
-    { key:'cm',      label:'Commit',          color: COL.cm,      desc:'Instruction committed — architectural state visible (1 cycle)' },
+    { key:'f1',      label:'Fetch1',          color: COL.f1,      desc:'A line held by Fetch1, from when the line is requested until its response is consumed. On a miss the request and response cells stay this colour (the line is still in Fetch1), only the fill wait is coloured separately. An instruction whose bytes span more than one line draws one Fetch1 segment per line it needed.' },
+    { key:'f1miss',  label:'ICache miss',     color: COL.f1miss,  desc:'Thin strip on the request cell of a fetch that missed in the instruction cache. It marks the cycle the miss was reported. The cell underneath is still ordinary Fetch1.' },
+    { key:'f1stall', label:'ICache stall',    color: COL.f1stall, desc:'Fetch1 blocked waiting for an instruction-cache fill. MinorCPU has no separate I-cache stage, so the line stays in Fetch1 for the whole fill.' },
+    { key:'feStall', label:'Front-end stall', color: COL.feStall, desc:'Gap between the line fetches of an instruction whose bytes span more than one line, while Fetch1 issues the request for the next line. Only appears on such instructions.' },
+    { key:'f2buf',   label:'Fetch2 buf',      color: COL.f2buf,   desc:'A fetched line waiting in the Fetch2 input buffer before Fetch2 takes it.' },
+    { key:'f2',      label:'Fetch2',          color: COL.f2,      desc:'Fetch2 turns raw fetched bytes into a decoded instruction and consults the branch predictor.' },
+    { key:'decbuf',  label:'Dec buf',         color: COL.decbuf,  desc:'Instruction waiting in the Decode input buffer before Decode takes it.' },
+    { key:'dec',     label:'Decode',          color: COL.dec,     desc:'Decode finalises the instruction and assigns its execute sequence number.' },
+    { key:'dtoe',    label:'dToE transit',    color: COL.dtoe,    desc:'Transit between Decode and Execute. Only visible when that hand-off takes more than one cycle.' },
+    { key:'exbuf',   label:'Exec buf',        color: COL.exbuf,   desc:'Instruction waiting ahead of a functional unit for the unit and for its operands (scoreboard).' },
+    { key:'int',     label:'Execute Int',     color: COL.int,     desc:'Executing on an integer functional unit.' },
+    { key:'branch',  label:'Execute Branch',  color: COL.branch,  desc:'Executing a control instruction (jal, jalr, blt, beq, and so on).' },
+    { key:'fp',      label:'Execute FP',      color: COL.fp,      desc:'Executing on a floating-point functional unit.' },
+    { key:'vec',     label:'Execute Vector',  color: COL.vec,     desc:'Executing a vector, SIMD or matrix instruction.' },
+    { key:'atomic',  label:'Execute Atomic',  color: COL.atomic,  desc:'Executing an atomic memory instruction (lr, sc, amo).' },
+    { key:'mem',     label:'Execute Mem',     color: COL.mem,     desc:'Memory functional unit: load or store dispatch.' },
+    { key:'memreq',  label:'Mem request',     color: COL.memreq,  desc:'A load or store in flight, from the LSQ through the data cache to its response.' },
+    { key:'dcmiss',  label:'DCache miss',     color: COL.dcmiss,  desc:'A cycle a data-cache miss occurred. The label shows the kind: "ld✗" for a load miss, "st✗" for a store miss. Both count toward the data-cache totals in the config panel.' },
+    { key:'sbbuf',   label:'Store buffer',    color: COL.sbbuf,   desc:'A store waiting in the store buffer until it is written to the data cache.' },
+    { key:'flush',   label:'Mispredict (T✗/N✗)', color: '#ff4040', desc:'Marker on the Execute cell where the core discovered the misprediction. The letter is the actual direction (T taken, N not taken), the cross means the prediction was wrong. The front end is flushed and the correct path refetched. The cost shows as a branch-bubble block on the resuming instruction row, not on the branch.' },
+    { key:'correct', label:'Predicted (T✓/N✓)', color: '#40c0ff', desc:'Marker on the Fetch2 cell where the predictor resolved the branch. A correctly predicted not-taken branch is free, the fall-through just continues. A correctly predicted taken branch still pays a bubble: the redirect is at Fetch2, so the target must still be fetched and walk the front end before it executes. The letter is the actual direction, the check means the prediction matched.' },
+    ...['taken', 'refill', 'refillmiss', 'serialize'].map(k => ({
+      key: BUB[k].legendKey, label: BUB[k].label, color: BUB[k].swatch, desc: BUB[k].desc,
+    })),
+    { key:'flushed', label:'Flushed instr',   color: COL.flushed, desc:'A wrong-path instruction fetched before the branch ahead of it resolved, then discarded. It reaches only fetch or decode, so it is a short stub with no execute or commit.' },
+    { key:'wb',      label:'Commit wait',     color: COL.wb,      desc:'A completed instruction waiting for in-order commit because an older instruction is still in a functional unit. This is NOT a write-back stage, MinorCPU has none, it is purely the wait for commit.' },
+    { key:'cm',      label:'Commit',          color: COL.cm,      desc:'The instruction committed and its architectural state is now visible.' },
   ];
 
   const present = new Set();
   for (const ins of vis) {
-    if (ins.wrapsLine) present.add('wrap');
     if (ins.f1 !== null) present.add('f1');
     if (ins.icMiss === true) { present.add('f1miss'); present.add('f1stall'); }
     if (ins.wrapsLine && ins.f1respA !== null && ins.f1reqB !== null
@@ -1842,6 +2153,10 @@ function buildLegend() {
     if (ins.sbPush !== null)                                             present.add('sbbuf');
     if (ins.branchOutcome === 'mispred')                                 present.add('flush');
     if (ins.branchOutcome === 'correct')                                 present.add('correct');
+    if (ins._bubble && ins._bubble.gap >= 1) {
+      const meta = BUB[ins._bubble.kind];
+      if (meta) present.add(meta.legendKey);
+    }
     if (ins.fuDone !== null && ins.cm !== null && ins.cm > ins.fuDone)   present.add('wb');
     if (ins.cm !== null)                                                 present.add('cm');
   }
@@ -1853,7 +2168,7 @@ function buildLegend() {
 }
 
 /* ============================================================================
- * SECTION 8 — Scroller setup (the inner div sizes the scrollbars)
+ * SECTION 8 - Scroller setup (the inner div sizes the scrollbars)
  * ========================================================================== */
 function setupScrollers() {
   const scroller = document.getElementById('scroller');
@@ -1875,7 +2190,7 @@ function setupScrollers() {
 }
 
 /* ============================================================================
- * SECTION 9 — Zoom & Fit
+ * SECTION 9 - Zoom & Fit
  * ========================================================================== */
 function setZoom(delta = 0) {
   const el = document.getElementById('zx');
@@ -1885,7 +2200,7 @@ function setZoom(delta = 0) {
   if (vis.length) { setupScrollers(); redraw(); }
 }
 
-/* Fit the entire visible program into the viewport — useful as a "super
+/* Fit the entire visible program into the viewport. Useful as a "super
  * zoom out" for getting a bird's-eye view of execution. cellW is allowed
  * below MIN_CELL here (subpixel cycles). The slider snaps to its closest
  * integer so subsequent slider use behaves predictably. */
@@ -1906,7 +2221,7 @@ function fitAll() {
 }
 
 /* ============================================================================
- * SECTION 10 — Drawing
+ * SECTION 10 - Drawing
  * ========================================================================== */
 function redraw() {
   if (!vis.length) return;
@@ -1977,19 +2292,27 @@ function redraw() {
     lctx.fillText(String(ins.seq).padStart(4, ' '), 2,  ry + ROW_H - 3);
     lctx.fillStyle = '#505070';
     lctx.fillText(ins.pc,                            36, ry + ROW_H - 3);
-    /* Wrap marker — small amber ↪ for 32-bit instructions whose two halves
-     * sat in different fetch lines.  Drawn before the mnemonic so it shows
-     * up regardless of mnemonic length. */
+    /* Markers just before the mnemonic. ▪ (cyan) = RVC compressed
+     * (16-bit). ↪ (amber) = the instruction's bytes were fetched from
+     * more than one line (misaligned across a fetch-line boundary).
+     * Two slots so both can show on the rare instruction that is both. */
+    const bothMarks = ins.compressed && ins.wrapsLine;
+    if (ins.compressed) {
+      lctx.fillStyle = '#3ec0b0';
+      lctx.font = '10px -apple-system,sans-serif';
+      lctx.fillText('▪', bothMarks ? 78 : 82, ry + ROW_H - 3);
+    }
     if (ins.wrapsLine) {
       lctx.fillStyle = '#f0a030';
       lctx.font = '10px -apple-system,sans-serif';
-      lctx.fillText('↪', 82, ry + ROW_H - 3);
+      lctx.fillText('↪', bothMarks ? 86 : 82, ry + ROW_H - 3);
     }
     lctx.fillStyle = ins.flushed   ? '#804040'
-                   : ins.isControl ? '#50a0d0'
+                   : ins.isControl ? COL.branch
                    :                 fuTextColor(ins.fu);
     lctx.font = '10px -apple-system,sans-serif';
-    const lbl = ins.instr.length > 22 ? ins.instr.slice(0, 21) + '…' : ins.instr;
+    const disp = dispMnem(ins);
+    const lbl  = disp.length > 22 ? disp.slice(0, 21) + '…' : disp;
     lctx.fillText(lbl, 92, ry + ROW_H - 2);
 
     /* Pipeline bars (the meat of the row). */
@@ -2014,7 +2337,7 @@ function redraw() {
   /* Forwarding arrows.  When the "Forwarding" toolbar checkbox is on, draw
    * an arrow from each producer's FU-output cycle to each consumer's
    * issue cycle for every visible RAW dependency. Only arrows where BOTH
-   * endpoints are inside `vis` are drawn; if a fetch-range filter excludes
+   * endpoints are inside `vis` are drawn. If a fetch-range filter excludes
    * the producer, the dependency simply has no arrow (its source isn't on
    * screen). The arrows are drawn as thin amber curves, with an arrowhead
    * at the consumer end, between the TOP edges of the producer's and
@@ -2028,7 +2351,7 @@ function redraw() {
 }
 
 function drawForwardingArrows(ctx, firstRow, lastRow, firstCyc, ROW_H) {
-  /* Only walk the rows currently on screen — arrows that originate or land
+  /* Only walk the rows currently on screen. Arrows that originate or land
    * far outside the viewport can be skipped without changing the visible
    * result. Producer arrows from rows ABOVE the viewport that still land
    * inside are kept by checking visBySeq, since the producer might be
@@ -2051,7 +2374,7 @@ function drawForwardingArrows(ctx, firstRow, lastRow, firstCyc, ROW_H) {
       /* True forwarding only.  The producer writes back to the register
        * file at the END of its commit cycle, so a consumer that issues at
        * any cycle <= prod.cm is reading the value off the FU output, not
-       * the regfile — that's forwarding. After commit (cons.ex > prod.cm)
+       * the regfile. That's forwarding. After commit (cons.ex > prod.cm)
        * the read is just a plain regfile access and drawing an arrow for
        * it would only add clutter without teaching anything. */
       if (prod.cm === null || cons.ex > prod.cm) continue;
@@ -2069,9 +2392,9 @@ function drawForwardingArrows(ctx, firstRow, lastRow, firstCyc, ROW_H) {
       const prodY = (prodRow - firstRow) * ROW_H + ROW_H * 0.5;
       /* Cull arrows that lie entirely off the canvas. */
       if (Math.max(prodX, consX) < -20 || Math.min(prodX, consX) > 20000) continue;
-      /* Uniform style for every forwarding arrow — same straight line,
+      /* Uniform style for every forwarding arrow. Same straight line,
        * same width, same arrowhead, same colour. The "is the producer a
-       * load" distinction has been retired; the only producer-side
+       * load" distinction has been retired. The only producer-side
        * adjustment is the lastExecCol anchor above, which keeps the
        * arrow rooted on the last visibly-exec cell whether or not the
        * cm cell is overlaying part of the exec bar. */
@@ -2123,7 +2446,7 @@ function drawBars(ctx, ins, ry, firstCyc) {
     }
   }
 
-  /* Thin overlay strip at a fixed pixel offset from top — for memory events. */
+  /* Thin overlay strip at a fixed pixel offset from top. For memory events. */
   function strip(c0, c1, color, yOff, stripH, label = '') {
     if (c0 === null || c1 === null || c1 <= c0) return;
     const x = (c0 - firstCyc) * cellW;
@@ -2147,12 +2470,12 @@ function drawBars(ctx, ins, ry, firstCyc) {
 
   /* Execute-stage color: flushed > atomic > vector-mem > vector-arith >
    * float-mem > float > scalar-mem > branch > int. Vector / matrix FUs
-   * are detected by the Simd or Vec prefix (gem5's RVV opclass naming);
+   * are detected by the Simd or Vec prefix (gem5's RVV opclass naming). 
    * vector memory variants like SimdUnitStrideLoad still colour as mem
    * since they ARE memory operations. Atomic FU classes (lr/sc/amo*)
    * are coloured separately even though they are technically memory ops,
    * so they stand out in a trace. Falls through to int for anything we
-   * don't recognise — safe default. */
+   * don't recognise. Safe default. */
   const fu       = ins.fu || '';
   const isVecMem = /Simd(UnitStride|Strided|Indexed|WholeReg)(Load|Store)?|VecMem/.test(fu);
   const isVec    = /Simd|Vec|Matrix/.test(fu);
@@ -2184,16 +2507,16 @@ function drawBars(ctx, ins, ry, firstCyc) {
    *   0.60  Fetch2 / fe2 buf / dToE transit
    *   0.65  Decode / Dec buf / (was) Exec buf
    *   0.85  Execute (int / branch / fp / mem / vec / atomic)
-   *         Exec input buffer — same height as execute, intentionally
-   *         WB / commit-wait — also same height as execute
-   *   1.0   Commit — taller than execute so it stands out, especially in
+   *         Exec input buffer. Same height as execute, intentionally
+   *         WB / commit-wait. Also same height as execute
+   *   1.0   Commit. Taller than execute so it stands out, especially in
    *         the load case where it overdraws the exec bar.
    * The rule is: decode ≤ execute = exec-buf = wb < commit. */
   const H_EXEC = 0.85;
 
-  /* 7. Commit wait: fuDone → cm (only when fuDone < cm — the usual order). */
+  /* 7. Commit wait: fuDone → cm (only when fuDone < cm. The usual order). */
   if (ins.cm !== null && ins.fuDone !== null && ins.cm > ins.fuDone)
-    seg(ins.fuDone, ins.cm, sc(COL.wb), H_EXEC, 'wb');
+    seg(ins.fuDone, ins.cm, sc(COL.wb), H_EXEC, 'cmw');
 
   /* 6. FU execution: ex → fuDone. */
   if (ins.ex !== null)
@@ -2229,11 +2552,11 @@ function drawBars(ctx, ins, ry, firstCyc) {
   /* 1. Fetch2 (1 cycle). */
   if (ins.f2 !== null) seg(ins.f2, ins.f2 + 1, sc(COL.f2), 0.60, 'fe2');
 
-  /* 0. Fetch1 — the line stays in Fetch1 from request issue (f1req) until
+  /* 0. Fetch1. The line stays in Fetch1 from request issue (f1req) until
    *    the response is consumed (MinorLine, f1). Drawn as a closed-interval
    *    bar over [f1req, f1].  For a line-wrapping 32-bit instruction the
    *    bar is split into TWO sub-segments, one per line that was actually
-   *    fetched, each rendered with its OWN hit/miss status — so a wrap in
+   *    fetched, each rendered with its OWN hit/miss status. So a wrap in
    *    which the earlier line missed but the later line hit shows as
    *    miss bar + plain blue bar, not as one big miss bar.  When the two
    *    line fetches are not back-to-back in time (Fetch1 was doing other
@@ -2242,13 +2565,13 @@ function drawBars(ctx, ins, ry, firstCyc) {
    *    while the instruction is still effectively in the front end.
    *
    *    Within a single segment:
-   *      • Hit  — solid blue, every cycle is fe1 (request + response).
-   *      • Miss — request cell drawn as fe1 (blue) with a thin red 'IC'
+   *      • Hit. Solid blue, every cycle is fe1 (request + response).
+   *      • Miss. Request cell drawn as fe1 (blue) with a thin red 'IC'
    *               strip pinned to its top, middle cells (if any) drawn as
    *               'icache stall' (dark red), response cell drawn as fe1
    *               (blue) again.  Both endpoint cells carry an 'fe1' label
    *               so they read as the same stage on either side of the
-   *               stall; 'IC' is the event marker, not a colour for the
+   *               stall. 'IC' is the event marker, not a colour for the
    *               request cycle. */
   function renderFetch1Segment(reqCyc, respCyc, missed) {
     if (reqCyc === null || respCyc === null) return;
@@ -2265,7 +2588,7 @@ function drawBars(ctx, ins, ry, firstCyc) {
       seg(start + 1, end - 1, sc(COL.f1stall), 0.55, 'icache stall');     // middle stall
     if (end - start > 1)
       seg(end - 1, end, sc(COL.f1), 0.55, 'fe1');                         // response cell
-    /* IC marker strip — sized so its bottom edge meets the top of the
+    /* IC marker strip. Sized so its bottom edge meets the top of the
      * fe1 bar (which uses hFrac = 0.55, leaving h * 0.45 px of empty
      * space above). Eliminates the previous 1–4 px gap between strip
      * and bar that appeared at typical zoom levels. */
@@ -2293,13 +2616,13 @@ function drawBars(ctx, ins, ry, firstCyc) {
   }
 
   /* ---- Memory overlays (thin strips on top of execute bar) ---------------
-   * Strip height controls the font size — strip() uses min(stripH, 9px) for
+   * Strip height controls the font size. Strip() uses min(stripH, 9px) for
    * the label. We bump these well above the previous 22% so the 'mem', 'sb',
    * 'ld✗', and 'st✗' labels are clearly readable at typical zoom levels. */
   const sH = Math.max(6, Math.round(h * 0.36));
   /* Memory-request strip with its 'mem' label.  When a DCache miss is
    * present we split the strip so the 'mem' label sits in a sub-strip
-   * starting at memIssue+1; otherwise the dcmiss strip (also at cell
+   * starting at memIssue+1. Otherwise the dcmiss strip (also at cell
    * memIssue) would overdraw the 'mem' label and the user would just see
    * 'ld✗' / 'st✗' with no clue that it's still part of an in-flight
    * memreq region. */
@@ -2320,17 +2643,35 @@ function drawBars(ctx, ins, ry, firstCyc) {
   if (ins.sbPush     !== null && ins.sbDelete    !== null)
     strip(ins.sbPush,   ins.sbDelete,     COL.sbbuf,  sH + 1,   sH, 'sb');
 
-  /* ---- Branch outcome marker (strip on top of the exec bar, label inside)
-   * Same visual idiom as the memory / cache-miss tags: a thin coloured strip
-   * pinned to the top of the exec cell where the branch executed, with the
-   * outcome label inside the strip. Old rendering used a 3-pixel stripe at
-   * the bottom and printed the label ABOVE the row, which could let the
-   * text run outside its instruction row at low zoom. */
+  /* ---- Branch resolution marker. A thin coloured strip on top of the
+   * stage cell that actually resolved the branch: the Fetch2 cell for a
+   * predicted branch, the Execute cell for a mispredict discovered at
+   * Execute. The label is the actual direction plus the outcome glyph
+   * (T/N, ✓ correct, ✗ mispredict), so position shows WHEN/WHERE it was
+   * resolved and the glyph shows the outcome. */
   if (ins.branchOutcome) {
-    const bCol   = ins.branchOutcome === 'mispred' ? '#ff4040' : '#40c0ff';
-    const bLabel = ins.branchOutcome === 'mispred' ? 'br✗' : 'br✓';
-    const bCyc   = ins.ex ?? ins.flushCycle ?? ins.dec;
-    if (bCyc !== null) strip(bCyc, bCyc + 1, bCol, 0, sH, bLabel);
+    const mis  = ins.branchOutcome === 'mispred';
+    const bCol = mis ? '#ff4040' : '#40c0ff';
+    const dir  = ins.branchActualTaken === false ? 'N' : 'T';
+    const lbl  = dir + (mis ? '✗' : '✓');
+    const cell = ins.branchCaughtAt === 'fetch2'
+               ? ins.f2
+               : (ins.ex ?? ins.flushCycle ?? ins.dec);
+    if (cell !== null) strip(cell, cell + 1, bCol, 0, sH, lbl);
+  }
+
+  /* ---- Branch bubble. Drawn on the RESUMING instruction's own row as a
+   * pipeline-stage-shaped block, same height as fe1, immediately before
+   * its fe1 (it ends exactly where fe1 starts). It spans from the cycle
+   * the branch resolved (f1req - gap) to the start of this fetch. A
+   * 0-cycle bubble is not drawn (there is nothing to show and it would
+   * overlap fe1). The taken-bubble colour is a distinct violet so it is
+   * never confused with the blue fe1 stage. */
+  if (ins._bubble && ins.f1req !== null && ins._bubble.gap >= 1) {
+    const bCol = (BUB[ins._bubble.kind] || BUB.refill).fill;
+    const g1 = ins.f1req;
+    const g0 = g1 - ins._bubble.gap;
+    seg(g0, g1, bCol, 0.55, 'bub');
   }
 }
 
@@ -2342,11 +2683,17 @@ function fuTextColor(fu) {
   return '#70d090';
 }
 
+/* Mnemonic as shown to the user: the RVC c_ / c. prefix is dropped for
+ * compressed instructions (the ▪ marker carries that information). */
+function dispMnem(ins) {
+  return ins.compressed ? (ins.instr || '').replace(/^c[_.]/, '') : (ins.instr || '');
+}
+
 /* ============================================================================
- * SECTION 11 — Mouse (status bar, tooltip, hover crosshair)
+ * SECTION 11 - Mouse (status bar, tooltip, hover crosshair)
  *
  * Mouse handlers are bound to #scroller, NOT #tlcanvas.  Both elements have
- * position:absolute and inset:0 inside #tlpanel; #scroller comes later in
+ * position:absolute and inset:0 inside #tlpanel. #scroller comes later in
  * the DOM, so it sits on top in the default stacking order and intercepts
  * every event.  Binding to the canvas would silently do nothing.
  * ========================================================================== */
@@ -2370,7 +2717,7 @@ scroller.addEventListener('mousemove', ev => {
 
   if (row < 0 || row >= vis.length) return;
   const ins = vis[row];
-  document.getElementById('s-i').textContent = ins.instr;
+  document.getElementById('s-i').textContent = dispMnem(ins);
   document.getElementById('s-f').textContent = ins.fu;
   document.getElementById('s-p').textContent = ins.pc;
 
@@ -2387,20 +2734,48 @@ scroller.addEventListener('mousemove', ev => {
   /* Format a wait cell: value, color, and "(max N)" context so the user
    * can see how this instruction's wait compares to the worst observed. */
   const fmtWait = (val, max) => {
-    if (val === null) return '<td>—</td>';
+    if (val === null) return '<td>-</td>';
     const ctx = max > 0 ? ` <span style="color:#505050">(max ${max})</span>` : '';
     return `<td style="color:${colorizeWait(val, max)}">${val}c${ctx}</td>`;
   };
 
+  /* Bubble banner, shown FIRST in the tooltip. Two complementary views:
+   * the bubble this instruction suffered before its own fetch (resuming
+   * instruction), and the bubble this branch caused (branch). */
+  const bubKindTxt = k => (BUB[k] || BUB.refill).txt;
+  let bubbleTop = '', bubbleBottom = '';
+  if (ins._bubble) {
+    const isSerB = ins._bubble.kind === 'serialize';
+    const hdr = isSerB ? 'Serialize bubble before this fetch'
+                       : 'Branch bubble before this fetch';
+    const causeTxt = isSerB
+      ? `· caused by serialize #${ins._bubble.branchSeq}`
+      : `· caused by branch #${ins._bubble.branchSeq}`;
+    bubbleTop = `<div style="margin:2px 0 6px;padding:5px 7px;border-radius:4px;background:rgba(255,255,255,0.04);font-size:11px">
+      <span style="color:#909090">${hdr}</span><br>
+      <b>${ins._bubble.gap}c</b> · ${bubKindTxt(ins._bubble.kind)}
+      <span style="color:#505050">${causeTxt}</span></div>`;
+  }
+  if ((ins.branchOutcome || ins.serializeAfter) && ins.recoveryGap != null) {
+    const causedLbl = ins.serializeAfter
+      ? 'Bubble this serialization caused'
+      : 'Bubble this branch caused';
+    bubbleBottom = `<div style="margin:6px 0 2px;padding:5px 7px;border-radius:4px;background:rgba(255,255,255,0.04);font-size:11px">
+      <span style="color:#909090">${causedLbl}</span><br>
+      <b>${ins.recoveryGap}c</b> · ${bubKindTxt(ins.bubbleKind)}
+      <span style="color:#505050">· drawn on resuming inst #${ins.recoverySeq}</span></div>`;
+  }
+
   const tt = document.getElementById('tt');
   tt.style.display = 'block';
   tt.innerHTML = `
-    <div style="font-weight:500;color:#e4e2dc">${ins.instr}</div>
+    <div style="font-weight:500;color:#e4e2dc">${dispMnem(ins)}${ins.compressed ? ' <span style="color:#3ec0b0;font-size:10px">▪ compressed</span>' : ''}</div>
     <div style="color:#505050;font-size:10px;margin-bottom:6px">${ins.pc} · #${ins.seq}${ins.fuIdx !== null ? ' · FU' + ins.fuIdx : ''}</div>
+    ${bubbleTop}
     <table style="border-collapse:collapse;font-size:11px">
-      <tr><td style="color:#505050;padding-right:12px">Class</td>   <td>${ins.fu || '—'}</td></tr>
-      <tr><td style="color:#505050">srcRegs</td>                    <td style="color:#f0a030">${ins.src  || '—'}</td></tr>
-      <tr><td style="color:#505050">destRegs</td>                   <td style="color:#3ecf9a">${ins.dest || '—'}</td></tr>
+      <tr><td style="color:#505050;padding-right:12px">Class</td>   <td>${ins.fu || '-'}</td></tr>
+      <tr><td style="color:#505050">srcRegs</td>                    <td style="color:#f0a030">${ins.src  || '-'}</td></tr>
+      <tr><td style="color:#505050">destRegs</td>                   <td style="color:#3ecf9a">${ins.dest || '-'}</td></tr>
       <tr><td colspan=2 style="padding-top:4px"></td></tr>
       <tr><td style="color:#505050">F1 req</td>   <td>C${ins.f1req ?? '?'}${ins.wrapsLine ? ` <span style="color:#f0a030">(L${ins.wrapPrevLineSeq})</span>` : ''}</td></tr>
       <tr><td style="color:#505050">F1 resp</td>  <td>C${ins.f1    ?? '?'}${ins.wrapsLine ? ` <span style="color:#f0a030">(L${ins.lineSeq})</span>` : ''}${ins.icMiss ? ' <span style="color:#e05050">MISS</span>' : ins.icMiss === false ? ' <span style="color:#3ecf9a">hit</span>' : ''}</td></tr>
@@ -2418,9 +2793,8 @@ scroller.addEventListener('mousemove', ev => {
       <tr><td style="color:#505050">Exec buf</td> ${fmtWait(ebuf,    pipelineStats.ebuf)}</tr>
       <tr><td style="color:#505050">FU lat</td>   ${fmtWait(fuLat,   pipelineStats.fuLat)}</tr>
       <tr><td style="color:#505050">Cm wait</td>  ${fmtWait(cmWait,  pipelineStats.cmWait)}</tr>
-      ${ins.icMiss !== null ? `<tr><td colspan=2 style="padding-top:3px"></td></tr>
-        <tr><td style="color:#505050">ICache</td><td style="color:${ins.icMiss ? '#e05050' : '#3ecf9a'}">${ins.icMiss ? 'MISS' : 'hit'}</td></tr>` : ''}
-      ${ins.memIssue !== null ? `<tr><td style="color:#505050">Mem req</td>
+      ${ins.memIssue !== null ? `<tr><td colspan=2 style="padding-top:3px"></td></tr>
+        <tr><td style="color:#505050">Mem req</td>
         <td>C${ins.memIssue}→C${ins.memComplete ?? '?'} (${ins.memComplete && ins.memIssue ? (ins.memComplete - ins.memIssue) + 'c' : '?'})</td></tr>` : ''}
       ${ins.dcMiss !== null ? `<tr><td style="color:#505050">DCache</td>
         <td style="color:${ins.dcMiss ? '#e05050' : '#3ecf9a'}">${ins.dcMiss ? 'MISS' : 'hit'}</td></tr>` : ''}
@@ -2429,18 +2803,27 @@ scroller.addEventListener('mousemove', ev => {
       ${ins.branchOutcome ? `<tr><td colspan=2 style="padding-top:3px"></td></tr>
         <tr><td style="color:#505050">Branch</td>
           <td style="color:${ins.branchOutcome === 'mispred' ? '#ff4040' : '#40c0ff'}">${
-            ins.branchOutcome === 'mispred' ? '✗ Misprediction (pipeline flush)' : '✓ Correctly predicted'}</td></tr>
+            ins.branchOutcome === 'mispred' ? '✗ Mispredicted' : '✓ Predicted correctly'}</td></tr>
+        <tr><td style="color:#505050">Predicted</td><td>${ins.predictedTaken ? 'taken' : 'not taken'}</td></tr>
+        <tr><td style="color:#505050">Actual</td><td>${ins.branchActualTaken === false ? 'not taken' : 'taken'}</td></tr>
+        ${ins.branchCaughtAt ? `<tr><td style="color:#505050">Resolved at</td><td>${
+            ins.branchCaughtAt === 'fetch2'
+              ? (ins.branchActualTaken === false
+                   ? 'Fetch2 (predicted not-taken, fell through)'
+                   : 'Fetch2 (predicted taken, little/no squash)')
+              : 'Execute (mispredict, full flush)'}</td></tr>` : ''}
         ${ins.flushCycle ? `<tr><td style="color:#505050">Redirects at</td><td>C${ins.flushCycle}</td></tr>` : ''}` : ''}
     </table>
     ${stage     ? `<div style="margin-top:5px;font-size:11px;color:${stageColor(stage)}">● ${stage}</div>` : ''}
-    ${ins.flushed   ? `<div style="margin-top:4px;font-size:10px;color:#ff4040">✗ Flushed instruction (misprediction) — never committed</div>` : ''}
+    ${ins.flushed   ? `<div style="margin-top:4px;font-size:10px;color:#ff4040">✗ Flushed instruction (misprediction). Never committed</div>` : ''}
     ${ins.estimated ? `<div style="margin-top:4px;font-size:10px;color:#505050">⚠ Stages estimated (no real data in trace)</div>` : ''}
+    ${bubbleBottom}
   `;
 
   /* Position the tooltip relative to the cursor, but keep it fully inside
    * the viewport. The default placement is below-right of the cursor. If
    * that would push the tooltip past the right edge it is flipped to the
-   * left of the cursor; if it would push past the bottom edge the top is
+   * left of the cursor. If it would push past the bottom edge the top is
    * clamped so the whole tooltip stays on screen. Because #tt is
    * position:fixed it cannot be scrolled into view, so without this an
    * instruction near the bottom of the window showed a tooltip whose
@@ -2515,7 +2898,7 @@ function getStage(ins, c) {
   const fd = ins.fuDone ?? (ins.ex !== null ? ins.ex + 1 : null);
   /* Commit cell is checked BEFORE the exec range. In MinorCPU loads have
    * fuDone > cm, so the cm cell sits inside [ex, fuDone). Visually the cm
-   * cell is drawn on top of the exec bar in that case; getStage must
+   * cell is drawn on top of the exec bar in that case. getStage must
    * agree, or the tooltip would mis-label the commit cell as exec. */
   if (ins.cm !== null && c >= ins.cm && c < ins.cm + 1)                            return 'Commit';
 
@@ -2561,7 +2944,7 @@ function stageColor(s) {
 }
 
 /* ============================================================================
- * SECTION 12 — Keyboard shortcuts
+ * SECTION 12 - Keyboard shortcuts
  * ========================================================================== */
 document.addEventListener('keydown', e => {
   /* Escape closes the config panel even when no trace is loaded. */
@@ -2584,7 +2967,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ============================================================================
- * SECTION 13 — Resize
+ * SECTION 13 - Resize
  * ========================================================================== */
 new ResizeObserver(() => { if (vis.length) redraw(); })
   .observe(document.getElementById('tlpanel'));
