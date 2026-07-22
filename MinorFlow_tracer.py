@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 """MinorFlow tracer: gem5 MinorCPU debug trace -> compact JSON for the viewer.
 
-This is a faithful port of the JavaScript parser that previously ran inside
-MinorFlow.html. Moving it to Python lets multi-GB traces be processed once,
-offline, without the browser's string-size and memory ceilings, and makes the
-parsing logic testable in isolation.
-
-The output JSON schema is documented in minorflow_schema.md. The viewer loads
-that JSON and does the rest (windowing, bubble/stall/forwarding analysis,
-rendering); none of that logic is duplicated here.
+Windowing, bubble/stall/forwarding analysis and rendering all live in the viewer.
 
 Usage:
     python3 minorflow_tracer.py trace.txt -o trace.json
@@ -23,7 +16,7 @@ import json
 import argparse
 
 # ==============================================================================
-# Regexes (identical patterns to the JS parser)
+# Regexes
 # ==============================================================================
 RE_TICK = re.compile(r'^\s*(\d+):')
 RE_BP = re.compile(
@@ -69,19 +62,13 @@ RE_COMPRESSED = re.compile(r'^c[_.]')
 
 
 class Progress:
-    """In-place stderr progress reporter for the streaming passes.
-
-    Prints e.g. "[pass 2/2] 14,250,000 lines · 312,004 insts · 45% · 18.3s"
-    on a single rewritten line, so a long parse visibly advances instead of
-    looking hung. Updates are throttled to a few times per second.
-    """
+    """In-place stderr progress reporter, throttled to a few updates/second."""
 
     def __init__(self, label, total_bytes=0, enabled=True):
         self.label = label
         self.total_bytes = total_bytes
         self.enabled = enabled and sys.stderr.isatty()
-        # Even when not a TTY (e.g. piped to a file) we still emit periodic
-        # new*line* updates so logs show progress, controlled by force_plain.
+        # Off a TTY, fall back to periodic newline updates.
         self.force_plain = enabled and not sys.stderr.isatty()
         self.start = time.time()
         self.last_emit = 0.0
@@ -117,9 +104,7 @@ class Progress:
 
 def detect_tpc_streaming(path, progress=None):
     """Pass 1: ticks-per-cycle = the MODE of positive deltas between unique
-    adjacent tick values. Streams the file so only the (small) set of distinct
-    tick values is held in memory, never the file. Mirrors the JS logic.
-    """
+    adjacent tick values. Holds only the set of distinct ticks."""
     tick_set = set()
     lines = 0
     bytes_done = 0
@@ -127,8 +112,6 @@ def detect_tpc_streaming(path, progress=None):
         for line in f:
             lines += 1
             bytes_done += len(line)
-            # Cheap prefix test before the regex: every data line starts with
-            # optional spaces then digits then ':'.
             m = RE_TICK.match(line)
             if m:
                 tick_set.add(int(m.group(1)))
@@ -155,8 +138,7 @@ def detect_tpc_streaming(path, progress=None):
 
 
 def detect_tpc(lines):
-    """Non-streaming variant kept for the in-memory parse() entry point and
-    for tests. Identical logic to detect_tpc_streaming."""
+    """Non-streaming variant of detect_tpc_streaming, for in-memory input."""
     tick_set = set()
     for line in lines:
         m = RE_TICK.match(line)
@@ -187,8 +169,7 @@ def round_half_up(x):
 
 def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_first):
     """Infer MinorCPU forward delays from the minimum observed stage gap.
-    Falls back to gem5 default 1 when fewer than 4 valid samples. Identical to
-    the JS inferForwardDelays."""
+    Falls back to gem5 default 1 when fewer than 4 valid samples."""
     d_f1f2, d_f2dec, d_dectr = [], [], []
     for seq, ex in execute_map.items():
         f1 = fetch1_map.get(ex['lineSeq'])
@@ -214,11 +195,8 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
 def parse(line_source, tpc, progress=None, total_bytes=0):
     """Pass 2: build per-instruction records from an iterable of trace lines.
 
-    line_source may be an open file handle (streaming, memory-safe for huge
-    traces) or a list of strings (in-memory, for tests). tpc must already be
-    detected via detect_tpc_streaming / detect_tpc. Nothing here holds the
-    whole file: only the per-instruction maps grow, bounded by instruction
-    count, not by file size.
+    line_source may be an open file handle or a list of strings. tpc must
+    already be detected via detect_tpc_streaming / detect_tpc.
     """
     # ---- Pass 2: event-by-event extraction ---------------------------------
     fetch1_map = {}     # lineSeq -> cycle of MinorLine response
@@ -682,15 +660,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     ic_access_cycles = sorted(ic_hit_cycles | ic_miss_cycles)
     ic_miss_arr = sorted(ic_miss_cycles)
 
-    # Data-cache events, counted from the access log directly (every load and
-    # store, hit or miss) rather than per-instruction. Per-instruction
-    # attribution misses store writebacks, which retire after commit on a
-    # different cycle than the LSQ issue cycle.
-    # dcache_by_cycle maps a cycle to the LIST of accesses seen at that cycle.
-    # A single LSU issues one demand access per cycle, but a dirty-victim
-    # writeback can share the cycle, so keep them all. Emit one cycle entry per
-    # access (with multiplicity) so the viewer, which counts entries inside the
-    # window, reports the true access and miss totals.
+    # Counted from the access log rather than per-instruction: per-instruction
+    # attribution misses store writebacks, which retire after commit. Cycles
+    # are emitted with multiplicity, since a dirty-victim writeback can share
+    # a cycle with a demand access.
     dc_access_cycles = sorted(
         c for c, evs in dcache_by_cycle.items() for _ in evs)
     dc_miss_cycles = sorted(c for c, evs in dcache_by_cycle.items()
@@ -726,11 +699,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
 
 
 def _dc_miss(lsq_evt, dcache_by_cycle):
-    """Did this instruction's own DCache access miss? Match the access
-    direction to the instruction (a store reads a write access, a load a read
-    access) so a store sharing its issue cycle with a load cannot pick up the
-    load's result, and vice versa. If no same-direction access is present at
-    the cycle, fall back to whatever is there."""
+    """Did this instruction's own DCache access miss? Matches on access
+    direction so a store sharing its issue cycle with a load cannot pick up
+    the load's result. Falls back to any access at that cycle."""
     if not lsq_evt or lsq_evt.get('issueCycle') is None:
         return None
     evs = dcache_by_cycle.get(lsq_evt['issueCycle'])
@@ -742,19 +713,15 @@ def _dc_miss(lsq_evt, dcache_by_cycle):
 
 
 def _dc_miss_store(lsq_evt, dcache_by_cycle):
-    # Store-ness of the missing access, used only alongside dcMiss to choose
-    # the store-miss cell over the load-miss cell. Taken from the instruction,
-    # which is the authoritative direction.
+    # Used alongside dcMiss to pick the store-miss cell over the load-miss one.
     if not lsq_evt:
         return None
     return True if lsq_evt.get('isStore') is True else None
 
 
 def parse_file(path, show_progress=True):
-    """Streaming entry point: two passes over the file by handle, memory-safe
-    for arbitrarily large traces. Pass 1 detects ticks-per-cycle holding only
-    the set of distinct ticks; pass 2 builds records holding only the
-    per-instruction maps. Neither pass materialises the file."""
+    """Streaming entry point: pass 1 detects ticks-per-cycle, pass 2 builds
+    the instruction records. Neither pass materialises the file."""
     total_bytes = 0
     try:
         total_bytes = os.path.getsize(path)
