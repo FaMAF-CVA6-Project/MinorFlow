@@ -17,7 +17,7 @@ Capture a trace from gem5:
 ```bash
 gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
          --debug-file=trace.txt \
-         gem5_config.py
+         gem5_config_MinorFlow.py
 ```
 
 Convert it to JSON:
