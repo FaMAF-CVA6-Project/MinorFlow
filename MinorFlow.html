@@ -474,7 +474,10 @@
       background: var(--bg3);
       border-top: 0.5px solid var(--border);
       padding: 6px 14px;
-      display: flex;
+      /* Hidden until a trace loads, then revealed as a flex row alongside
+       * #view. With no trace there is nothing to report, so the bar would
+       * otherwise sit under the dropzone showing a row of dashes. */
+      display: none;
       align-items: center;
       gap: 14px;
       flex-wrap: wrap;
@@ -2236,6 +2239,7 @@
       applyFilter();
       document.getElementById('dropzone').style.display = 'none';
       document.getElementById('view').style.display = 'flex';
+      document.getElementById('status').style.display = 'flex';
 
       /* Reset zoom: the previous trace's zoom may be too fine for this one. */
       cellW = DEFAULT_CELL;
