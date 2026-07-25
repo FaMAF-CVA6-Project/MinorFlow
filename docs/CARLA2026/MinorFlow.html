@@ -1143,6 +1143,12 @@
     let cellW = DEFAULT_CELL;    // pixels per cycle
     let scrollX = 0;    // horizontal scroll, measured in cycles from cMin
     let scrollY = 0;    // vertical scroll, measured in rows from top
+    /* Scroll positions the keyboard handler just wrote, so the scroll listener
+     * can tell its own echo from a mouse or wheel scroll and keep the
+     * keyboard's cycle-accurate origin instead of re-deriving it from the
+     * device-pixel-quantised position. */
+    let kbExpectPx = null;
+    let kbExpectPy = null;
     let _lblSig = '';   // label-list render signature (row window + height)
     let _lblVis = null; // vis array the label list was last built from
     let cMin = 0, cMax = 0;
@@ -1602,6 +1608,7 @@
     let _bigCountPromise = null;   // in-flight background instruction count
     let _bigCountToken = 0;        // guards a stale count applying to a new file
     function onBigRangeInput(el) {
+      bigRangeError('');
       const cleaned = el.value.replace(/[^0-9]/g, '');
       if (cleaned !== el.value) el.value = cleaned;
       if (el.value === '') return;
@@ -1633,6 +1640,12 @@
       }
     }
     function onBigRangeChange() { bigRangeCommit(); }
+    /* Write a message into the range prompt's error line. The paragraph exists
+     * only while the prompt is open, so the lookup is guarded. */
+    function bigRangeError(msg) {
+      const el = document.getElementById('bigerr');
+      if (el) el.textContent = msg;
+    }
     async function streamAndIngest(f, fromN, toN, whole) {
       const tn = document.getElementById('tracename');
       const prevName = tn.textContent, prevTitle = tn.title;
@@ -1667,7 +1680,10 @@
         promptRangedLoad(f, _bigMaxBytes,
           `That load was too big for the browser (${escapeHtml(err.message)}). ` +
           `Try a smaller range or cancel.`,
-          '1', String(Math.min(200000, whole ? total : toN)));
+          /* toN is the right prefill in both cases. The whole-file caller passes
+           * the record total as toN, so there is no separate total to consult,
+           * and the destructured total above is scoped to the try block. */
+          '1', String(Math.min(200000, toN)));
       } finally {
         hideLoading();
       }
@@ -3439,10 +3455,15 @@
       inner.style.height = totalH + 'px';
 
       scroller.onscroll = () => {
-        scrollX = Math.floor(scroller.scrollLeft / cellW);
+        /* An event echoing the keyboard handler's own write keeps the origin
+         * the handler set. Anything else (mouse, wheel, programmatic jumps)
+         * re-derives it from the position. */
+        if (scroller.scrollLeft === kbExpectPx) kbExpectPx = null;
+        else scrollX = Math.floor(scroller.scrollLeft / cellW);
         /* Round, not floor: on fractional-DPI displays scrollTop reads back a
          * fraction under the row boundary, and flooring shifts the row. */
-        scrollY = Math.round(scroller.scrollTop / getRowH());
+        if (scroller.scrollTop === kbExpectPy) kbExpectPy = null;
+        else scrollY = Math.round(scroller.scrollTop / getRowH());
         redraw();
       };
     }
@@ -3458,12 +3479,39 @@
       el.max = String(safeCW);
       if (delta) el.value = Math.max(MIN_CELL, Math.min(safeCW, +el.value + delta));
       if (+el.value > safeCW) el.value = String(safeCW);
+      const vp = document.getElementById('tlpanel');
+      const vpW = (vp && vp.clientWidth) || 800;
+      const vpH = (vp && vp.clientHeight) || 600;
+      const centerCyc = scrollX + (vpW / cellW) / 2;
+      const topRow = scrollY;
       cellW = Math.min(+el.value, maxSafeCellW());
       const rangeLimited = safeCW < MAX_CELL && +el.value >= safeCW;   // only at the window's max zoom
       document.getElementById('zoom-val').textContent =
         (cellW < 1 ? cellW.toFixed(2) : Math.round(cellW)) + 'px'
         + (rangeLimited ? ' (max for this range)' : '');
-      if (vis.length) { setupScrollers(); redraw(); }
+      if (vis.length) {
+        setupScrollers();
+        /* Re-anchor in cycle and row space, then sync the scroll position
+         * best-effort with the kbExpect guard, the same mechanism the arrow
+         * keys use, so the scroll listener keeps this origin on the echo of
+         * our own write. The span and height mirror setupScrollers' inner
+         * dimensions, so the clamps match what the browser will allow. */
+        const rh = getRowH();
+        const spanCyc = cMax - cMin + 3;
+        const visCyc = vpW / cellW;
+        const maxX = Math.max(0, Math.ceil(spanCyc - visCyc));
+        scrollX = Math.max(0, Math.min(maxX, Math.round(centerCyc - visCyc / 2)));
+        const totalRowsPx = vis.length * rh + Math.round(rh * 1.2);
+        const maxY = Math.max(0, Math.ceil((totalRowsPx - vpH) / rh));
+        scrollY = Math.max(0, Math.min(maxY, topRow));
+        const scroller = document.getElementById('scroller');
+        const devPx = 1 / (window.devicePixelRatio || 1);
+        scroller.scrollLeft = scrollX * cellW + devPx / 2;
+        kbExpectPx = scroller.scrollLeft;
+        scroller.scrollTop = scrollY * rh;
+        kbExpectPy = scroller.scrollTop;
+        redraw();
+      }
     }
 
     /* Fit the whole visible program into the viewport. cellW may go below
@@ -4901,19 +4949,35 @@
       const sc = document.getElementById('scroller');
       /* Focus the panel, not the scroll overlay: a focused scrollable element gets
        * native arrow-key scrolling that races with the handler below and jumps far at
-       * low zoom. The panel does not scroll, so only the cellW step applies. */
+       * low zoom. The panel does not scroll, so only the handler's step applies. */
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowDown'
         || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         const tp = document.getElementById('tlpanel');
         if (tp) tp.focus({ preventScroll: true });
       }
+      const devPx = 1 / (window.devicePixelRatio || 1);
+      const stepCol = dir => {
+        const maxX = Math.max(0, Math.ceil((sc.scrollWidth - sc.clientWidth) / cellW));
+        scrollX = Math.min(maxX, Math.max(0, scrollX + dir));
+        sc.scrollLeft = scrollX * cellW + devPx / 2;
+        kbExpectPx = sc.scrollLeft;
+        redraw();
+      };
+      const stepRow = dir => {
+        const rh = getRowH();
+        const maxY = Math.max(0, Math.ceil((sc.scrollHeight - sc.clientHeight) / rh));
+        scrollY = Math.min(maxY, Math.max(0, scrollY + dir));
+        sc.scrollTop = scrollY * rh;
+        kbExpectPy = sc.scrollTop;
+        redraw();
+      };
       switch (e.key) {
         case '+': case '=': setZoom(e.ctrlKey ? +1 : +4); e.preventDefault(); break;
         case '-': setZoom(e.ctrlKey ? -1 : -4); e.preventDefault(); break;
-        case 'ArrowRight': sc.scrollLeft += cellW; e.preventDefault(); break;
-        case 'ArrowLeft': sc.scrollLeft -= cellW; e.preventDefault(); break;
-        case 'ArrowDown': sc.scrollTop += getRowH(); e.preventDefault(); break;
-        case 'ArrowUp': sc.scrollTop -= getRowH(); e.preventDefault(); break;
+        case 'ArrowRight': stepCol(+1); e.preventDefault(); break;
+        case 'ArrowLeft': stepCol(-1); e.preventDefault(); break;
+        case 'ArrowDown': stepRow(+1); e.preventDefault(); break;
+        case 'ArrowUp': stepRow(-1); e.preventDefault(); break;
         case 'Home': sc.scrollLeft = 0; e.preventDefault(); break;
         case 'End': sc.scrollLeft = sc.scrollWidth; e.preventDefault(); break;
       }
