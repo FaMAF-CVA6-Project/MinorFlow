@@ -17,7 +17,7 @@ Capture a trace from gem5:
 ```bash
 gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
          --debug-file=trace.txt \
-         gem5_config_MinorFlow.py
+         gem5_config_MinorFlow.py <binary>
 ```
 
 Convert it to JSON:
@@ -79,6 +79,33 @@ Image: https://hub.docker.com/repository/docker/manuel313/gem5_v25/general
 - Python 3, standard library only
 - Any modern browser
 - gem5 with the MinorCPU RISC-V model, for producing traces
+
+## Paper
+
+MinorFlow is described in *MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture*, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, submitted to **CARLA 2026**, the Latin America High Performance Computing Conference. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
+
+Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in:
+
+| Path | Contents |
+| --- | --- |
+| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper |
+| `latex/` | LaTeX sources, bibliography and LNCS style files |
+| `images/` | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies |
+| `gem5_config_Reference_Core` | The gem5 configuration of the Reference Core the paper measures |
+| `daxpy_validation/` | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table |
+| `MinorFlow.html`, `MinorFlow_tracer.py` | The viewer and tracer as submitted |
+
+The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 1 in the paper: 100 MHz, a 16 KiB 4-way L1I and a 32 KiB 8-way L1D at one-cycle hit, a 1024-entry local branch predictor with a 256-entry BTB and a 16-entry RAS. Run it the same way as any other config:
+
+```bash
+gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
+         --debug-file=trace.txt \
+         gem5_config_Reference_Core <binary>
+```
+
+It is the baseline of the sweep in [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py), flattened into a standalone file: identical parameters, without the test table. Use the sweep instead when you want to perturb one part of the pipeline against this baseline.
+
+If you use MinorFlow in academic work, please cite it. [CITATION.cff](CITATION.cff) carries the metadata for both the software and the paper.
 
 ## Related
 

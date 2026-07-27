@@ -17,6 +17,33 @@ keywords:
   - gem5
   - RISC-V
   - computer architecture
+  - computer architecture education
   - microarchitecture
   - pipeline visualization
   - CPU simulation
+references:
+  - type: conference-paper
+    title: "MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture"
+    year: 2026
+    conference:
+      name: "CARLA 2026 - Latin America High Performance Computing Conference"
+    notes: >-
+      Submitted to CARLA 2026, under review. Paper sources, figures and
+      validation data are in docs/CARLA2026.
+    authors:
+      - family-names: "Nieto"
+        given-names: "Manuel"
+        affiliation: "FaMAF, Universidad Nacional de Córdoba"
+        orcid: "https://orcid.org/0009-0007-3893-5628"
+      - family-names: "Cortez Casini"
+        given-names: "Francisco"
+        affiliation: "FaMAF, Universidad Nacional de Córdoba"
+        orcid: "https://orcid.org/0009-0008-0892-0545"
+      - family-names: "Vélez Ibarra"
+        given-names: "María Delfina"
+        affiliation: "FaMAF, Universidad Nacional de Córdoba"
+        orcid: "https://orcid.org/0000-0001-6768-5313"
+      - family-names: "Vodanovic"
+        given-names: "Gonzalo Tomás"
+        affiliation: "FaMAF, Universidad Nacional de Córdoba"
+        orcid: "https://orcid.org/0009-0001-9650-5446"
