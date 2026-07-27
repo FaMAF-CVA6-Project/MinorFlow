@@ -363,7 +363,7 @@ if TEST not in TESTS:
  icache_overrides, clk_freq) = TESTS[TEST]
 
 print("=" * 70)
-print(f"   REFERENCE CORE SWEEP  -  TEST {TEST}: {test_name}")
+print(f"   TEST {TEST}: {test_name}")
 print(f"   CPU overrides : {cpu_overrides}")
 print(f"   L1I size      : {l1i_size}")
 print(f"   L1D size      : {l1d_size}")
