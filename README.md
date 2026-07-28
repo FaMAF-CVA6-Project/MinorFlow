@@ -20,7 +20,13 @@ gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decod
          gem5_config_MinorFlow.py <binary>
 ```
 
-Convert it to JSON:
+Or let [`run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with those flags and report the metrics, all in one command:
+
+```bash
+python3 run_gem5.py gem5_config_MinorFlow.py daxpy.S
+```
+
+Convert the trace to JSON, from wherever gem5 left it (`results/daxpy_trace.txt` when the driver ran it):
 
 ```bash
 python3 MinorFlow_tracer.py m5out/trace.txt -o trace.json
@@ -42,6 +48,36 @@ python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet]
 | `--quiet` | Suppress the progress output |
 
 If the tracer parses zero instructions it will tell you so, which almost always means the trace was captured without the Minor debug flags.
+
+## Running a test: `run_gem5.py`
+
+Capturing a trace by hand means compiling the test against gem5's `m5op.S`, remembering the full debug-flag list, and then reading the numbers out of `stats.txt`. `run_gem5.py` does all of it in one command, and is how every trace in [tests/](tests/) was produced.
+
+Run it **from the gem5 root**: the script takes the current directory as the gem5 root and looks for `./build/RISCV/gem5.opt`, `./include` and `./util/m5/src/abi/riscv/m5op.S` from there.
+
+```bash
+python3 run_gem5.py <config>.py <test> [--lang c|asm] [--no-trace]
+```
+
+| Argument | Meaning |
+| --- | --- |
+| `<config>.py` | The gem5 MinorCPU configuration script, for example [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) |
+| `<test>` | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension |
+| `--lang` | Force the type instead of detecting it |
+| `--no-trace` | Skip the debug flags and report metrics only. Use it when you only want the numbers, since the trace is the expensive part |
+
+What it does, in order:
+
+1. **Compiles.** `riscv64-unknown-elf-gcc` for `rv64gc` with the bit-manipulation and crypto extensions, freestanding (`-nostdlib -nostartfiles -static -mcmodel=medany`), linking gem5's `m5op.S` so the program can call `m5_reset_stats`, `m5_dump_stats` and `m5_exit`. C tests also get `-fno-builtin -e main`, since there is no crt0 to enter through.
+2. **Runs gem5** into `results/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `results/<test>_trace.txt`. That file is the tracer's input.
+3. **Disassembles.** `objdump -d -S -l` into `results/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `results/<test>_clean.txt`.
+4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. D-cache misses are read plus write, branches are the seven BTB lookup buckets summed, mispredictions come from `condIncorrect`, falling back to the sum over the seven `mispredicted::*` buckets. The table is appended to `results/<test>_clean.txt` alongside the disassembly.
+
+The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
+
+### Writing a test
+
+[benchmarks/](benchmarks/) holds the tests used to develop MinorFlow, and `test_template.c` and `test_template.S` are the starting points. The template sets up `gp`, calls `m5_reset_stats`, leaves a `MAIN PROGRAM` / `END OF MAIN PROGRAM` region for your code, and then calls `m5_dump_stats` and `m5_exit`. Write inside the markers and the driver measures and disassembles exactly that region.
 
 ## Why a separate tracer
 
