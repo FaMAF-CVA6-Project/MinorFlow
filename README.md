@@ -91,7 +91,7 @@ Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen 
 | `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper |
 | `latex/` | LaTeX sources, bibliography and LNCS style files |
 | `images/` | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies |
-| `gem5_config_Reference_Core` | The gem5 configuration of the Reference Core the paper measures |
+| `gem5_config_Reference_Core.py` | The gem5 configuration of the Reference Core the paper measures |
 | `daxpy_validation/` | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table |
 | `MinorFlow.html`, `MinorFlow_tracer.py` | The viewer and tracer as submitted |
 
