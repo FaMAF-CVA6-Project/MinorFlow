@@ -6,6 +6,7 @@ detected from the extension and can be forced with --lang.
 """
 import sys
 import os
+import shutil
 import subprocess
 import re
 import argparse
@@ -14,6 +15,15 @@ import argparse
 # GLOBAL CONFIGURATION
 # ==============================================================================
 GEM5_ROOT = os.getcwd()
+
+# Where gem5 writes: stats.txt, the debug trace, the disassembly. This is
+# gem5's own default output folder.
+GEM5_OUT_DIR = "m5out"
+
+# Folder next to this script where each run leaves a copy of the files worth
+# keeping. The originals stay in GEM5_OUT_DIR.
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "run_results")
 GCC_CMD = "riscv64-unknown-elf-gcc"
 OBJDUMP_CMD = "riscv64-unknown-elf-objdump"
 GEM5_BIN = "./build/RISCV/gem5.opt"
@@ -158,7 +168,7 @@ def compile_program(src_file, lang):
 
 
 def run_gem5(config_file, bin_file, no_trace, program_name):
-    out_dir = "results"
+    out_dir = GEM5_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     stats_path = os.path.join(out_dir, "stats.txt")
@@ -189,7 +199,7 @@ def run_gem5(config_file, bin_file, no_trace, program_name):
 
 
 def generate_and_show_codelist(bin_file, program_name):
-    out_dir = "results"
+    out_dir = GEM5_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     list_file = os.path.join(out_dir, f"{program_name}.list")
     clean_file = os.path.join(out_dir, f"{program_name}_clean.txt")
@@ -223,6 +233,36 @@ def generate_and_show_codelist(bin_file, program_name):
     print("\n" + "=" * 70 + "\n")
     print(f"[INFO] Clean file saved in: {clean_file}")
     return clean_file
+
+
+def collect_results(program_name):
+    """Copy the three files worth keeping into run_results/, next to this script.
+
+    The trace is what the viewer renders, the .list is the disassembly, and
+    the _clean.txt is the measured region plus the metrics table. The
+    originals are left in GEM5_OUT_DIR."""
+    try:
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+    except OSError as e:
+        print(f"[WARN] Could not create {RESULTS_DIR}: {e}")
+        return
+
+    copied = []
+    for name in (f"{program_name}_trace.txt", f"{program_name}.list",
+                 f"{program_name}_clean.txt"):
+        source = os.path.join(GEM5_OUT_DIR, name)
+        # With --no-trace there is no trace to copy, so a missing source here
+        # is expected rather than a problem.
+        if not os.path.isfile(source):
+            continue
+        try:
+            shutil.copy2(source, os.path.join(RESULTS_DIR, name))
+            copied.append(name)
+        except OSError as e:
+            print(f"[WARN] Could not copy {source}: {e}")
+
+    if copied:
+        print(f"[INFO] Copied to {RESULTS_DIR}: {', '.join(copied)}")
 
 
 def parse_stats(stats_path):
@@ -394,3 +434,6 @@ if __name__ == "__main__":
 
     metrics = parse_stats(stats_file)
     print_table(metrics, overhead, clean_file)
+
+    # Done last, so the _clean.txt copied out already carries the table.
+    collect_results(program_name)

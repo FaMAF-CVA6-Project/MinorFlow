@@ -26,10 +26,10 @@ Or let [`run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with
 python3 run_gem5.py gem5_config_MinorFlow.py daxpy.S
 ```
 
-Convert the trace to JSON, from wherever gem5 left it (`results/daxpy_trace.txt` when the driver ran it):
+Convert the trace to JSON. The driver leaves a copy in `run_results/` next to itself, so that is the shortest path to it:
 
 ```bash
-python3 MinorFlow_tracer.py m5out/trace.txt -o trace.json
+python3 MinorFlow_tracer.py run_results/daxpy_trace.txt -o trace.json
 ```
 
 Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window. There is nothing to install and nothing to serve. The viewer is a single self-contained HTML file with no dependencies.
@@ -69,15 +69,52 @@ python3 run_gem5.py <config>.py <test> [--lang c|asm] [--no-trace]
 What it does, in order:
 
 1. **Compiles.** `riscv64-unknown-elf-gcc` for `rv64gc` with the bit-manipulation and crypto extensions, freestanding (`-nostdlib -nostartfiles -static -mcmodel=medany`), linking gem5's `m5op.S` so the program can call `m5_reset_stats`, `m5_dump_stats` and `m5_exit`. C tests also get `-fno-builtin -e main`, since there is no crt0 to enter through.
-2. **Runs gem5** into `results/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `results/<test>_trace.txt`. That file is the tracer's input.
-3. **Disassembles.** `objdump -d -S -l` into `results/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `results/<test>_clean.txt`.
-4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. D-cache misses are read plus write, branches are the seven BTB lookup buckets summed, mispredictions come from `condIncorrect`, falling back to the sum over the seven `mispredicted::*` buckets. The table is appended to `results/<test>_clean.txt` alongside the disassembly.
+2. **Runs gem5** into `m5out/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `m5out/<test>_trace.txt`. That file is the tracer's input.
+3. **Disassembles.** `objdump -d -S -l` into `m5out/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `m5out/<test>_clean.txt`.
+4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. D-cache misses are read plus write, branches are the seven BTB lookup buckets summed, mispredictions come from `condIncorrect`, falling back to the sum over the seven `mispredicted::*` buckets. The table is appended to `m5out/<test>_clean.txt` alongside the disassembly.
+5. **Copies out the keepers.** The trace, the `.list` and the `_clean.txt` are copied into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
 
 ### Writing a test
 
 [benchmarks/](benchmarks/) holds the tests used to develop MinorFlow, and `test_template.c` and `test_template.S` are the starting points. The template sets up `gp`, calls `m5_reset_stats`, leaves a `MAIN PROGRAM` / `END OF MAIN PROGRAM` region for your code, and then calls `m5_dump_stats` and `m5_exit`. Write inside the markers and the driver measures and disassembles exactly that region.
+
+## Running the sweep: `run_MinorFlow_sweep.py`
+
+[gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) is not one machine but seventeen. `TEST 1` is the Reference Core. Every other entry perturbs one part of the pipeline so its effect is visible in the viewer, and the comment table names the workload that shows it:
+
+```
+#   1   baseline                                        workload: all
+#   4   fetch1LineWidth and snap 4 -> 16                workload: icache_pressure
+#  11   branchPred LocalBP -> TournamentBP              workload: branch_stress
+
+TEST = 1
+```
+
+`run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `run_gem5.py`:
+
+```bash
+python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--no-trace] [--list]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--configs` | Which configurations to run, for example `1,4-6`. Defaults to every one in the table |
+| `--tests-dir` | Where the workloads live. Defaults to `programs/`, relative to the gem5 root |
+| `--tests` | Comma-separated workloads to run for every configuration, instead of the ones the table names |
+| `--out-dir` | Where results are collected. Defaults to `MinorFlow_sweep_results/` |
+| `--config` | Sweep a copy or a variant of `gem5_config_MinorFlow.py` instead |
+| `--no-trace` | Metrics only, no traces |
+| `--list` | Print the plan and exit, touching nothing |
+
+For each configuration it sets `TEST` and runs that entry's workloads through [`run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
+
+Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_clean.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from.
+
+Once a run is collected its leftovers are deleted, both `run_results/` and `m5out/`. A debug trace runs to hundreds of megabytes and a full sweep is 23 runs, so keeping them would cost far more disk than the sweep is worth. A run that fails is left alone, since its output is what there is to debug with.
+
+Selecting a configuration means editing `TEST` in the configuration file, so the script backs it up and restores it when the sweep ends, fails or is interrupted. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
 
 ## Why a separate tracer
 
@@ -136,7 +173,7 @@ The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 
 ```bash
 gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
          --debug-file=trace.txt \
-         gem5_config_Reference_Core <binary>
+         gem5_config_Reference_Core.py <binary>
 ```
 
 It is the baseline of the sweep in [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py), flattened into a standalone file: identical parameters, without the test table. Use the sweep instead when you want to perturb one part of the pipeline against this baseline.
