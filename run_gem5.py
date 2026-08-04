@@ -83,8 +83,7 @@ METRICS_MAP = {
     "numCycles":         r"cores\.core\.numCycles",
     "numInsts":          r"cores\.core\.commitStats0\.numInsts\s",
     "icache_miss":       r"l1icaches\.overallMisses::total",
-    "dcache_miss_read":  r"l1dcaches\.ReadReq.misses::total",
-    "dcache_miss_write": r"l1dcaches\.WriteReq.misses::total",
+    "dcache_miss":       r"l1dcaches\.overallMshrMisses::total",
     "icache_access":     r"l1icaches\.overallAccesses::total",
     "dcache_access":     r"l1dcaches\.overallAccesses::total",
     "bp_look_d_cond":    r"branchPred\.btb\.lookups::DirectCond\b",
@@ -292,10 +291,6 @@ def parse_stats(stats_path):
     except FileNotFoundError:
         print("[ERROR] stats.txt not found")
         sys.exit(1)
-
-    # Consolidate D-Cache misses (read + write).
-    results["dcache_miss"] = (results.get("dcache_miss_read", 0) +
-                              results.get("dcache_miss_write", 0))
 
     # Total branches = all SEVEN BTB-lookup buckets
     results["branch_pred"] = (results.get("bp_look_d_cond", 0) +
