@@ -247,15 +247,29 @@ def output_paths(results_dir, test_name):
     }
 
 
-def discard_run(results_dir):
-    """Delete what the run left behind, once it has been collected.
+def discard_run(results_dir, test_name):
+    """Delete what this run left behind, once it has been collected.
 
-    A debug trace runs to hundreds of megabytes, and a sweep produces one per
-    run, so keeping m5out around would cost more disk than the whole sweep is
-    worth. Everything of value is already in the out directory."""
-    for path in (results_dir, GEM5_OUT_DIR):
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+    A debug trace runs to hundreds of megabytes and one is produced per run,
+    so keeping them would cost far more disk than the results are worth. Only
+    this test's files are removed, so a failed run's output survives the rest
+    of the batch."""
+    if os.path.isdir(results_dir):
+        shutil.rmtree(results_dir, ignore_errors=True)
+    for name in (f"{test_name}_trace.txt", f"{test_name}_clean.txt",
+                 f"{test_name}.list"):
+        path = os.path.join(GEM5_OUT_DIR, name)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def discard_gem5_out():
+    """Remove gem5's output folder, once nothing in it is worth keeping."""
+    if os.path.isdir(GEM5_OUT_DIR):
+        shutil.rmtree(GEM5_OUT_DIR, ignore_errors=True)
 
 
 def collect(results_dir, test_name, config_id, out_dir, want_trace):
@@ -480,7 +494,7 @@ def main():
                 else:
                     collect(results_dir, test_name, config_id,
                             args.out_dir, not args.no_trace)
-                    discard_run(results_dir)
+                    discard_run(results_dir, test_name)
                 results.append((config_id, test_name, code, elapsed))
 
     except KeyboardInterrupt:
@@ -491,6 +505,13 @@ def main():
         print(f"\n[INFO] Restored {config_path}")
 
     failed = print_summary(results, time.time() - sweep_start)
+    print(f"[INFO] Results in {os.path.abspath(args.out_dir)}")
+    if failed:
+        print(f"[INFO] The failed run(s) left their output in "
+              f"{os.path.abspath(GEM5_OUT_DIR)}")
+    else:
+        # Nothing in there is worth keeping now, so take the folder with it.
+        discard_gem5_out()
     return 1 if failed else 0
 
 
