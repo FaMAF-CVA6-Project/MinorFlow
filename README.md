@@ -65,6 +65,7 @@ python3 run_gem5.py <config>.py <test> [--lang c|asm] [--no-trace]
 | `<test>` | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension |
 | `--lang` | Force the type instead of detecting it |
 | `--no-trace` | Skip the debug flags and report metrics only. Use it when you only want the numbers, since the trace is the expensive part |
+| anything else | Passed on to the configuration script. A configuration that defines its own options gets them this way |
 
 What it does, in order:
 
@@ -75,6 +76,15 @@ What it does, in order:
 5. **Copies out the keepers.** The trace, the `.list` and the `_clean.txt` are copied into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
+
+A configuration script may define options of its own. Any flag `run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
+
+```bash
+python3 run_gem5.py my_config.py daxpy.S --some-config-flag
+python3 run_gem5.py my_config.py daxpy.S -- --some-config-flag   # when it takes a value
+```
+
+The `--` form is the unambiguous one: use it for a flag that takes a value, or one whose name collides with `--lang` or `--no-trace`. Forwarded flags are echoed before the run, and if the configuration rejects them its own error comes back through.
 
 ### Writing a test
 

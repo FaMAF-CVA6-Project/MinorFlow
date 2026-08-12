@@ -166,7 +166,20 @@ def compile_program(src_file, lang):
     return bin_file
 
 
-def run_gem5(config_file, bin_file, no_trace, program_name):
+def split_own_args(argv):
+    """Split the command line into this script's arguments and the ones meant
+    for the configuration.
+
+    Everything after a '--' is the configuration's, verbatim. That is the
+    unambiguous form, and the one to use for a flag that takes a value or that
+    shares a name with one of ours."""
+    if "--" in argv:
+        cut = argv.index("--")
+        return argv[:cut], argv[cut + 1:]
+    return argv, []
+
+
+def run_gem5(config_file, bin_file, no_trace, program_name, config_args=()):
     out_dir = GEM5_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
 
@@ -189,7 +202,15 @@ def run_gem5(config_file, bin_file, no_trace, program_name):
 
     cmd.extend(["-d", out_dir, config_file, bin_file])
 
+    # gem5 hands everything after the script's path to the script, so a
+    # configuration's own flags, such as the lab configuration's
+    # --port-model, ride along here untouched.
+    cmd.extend(config_args)
+
     print(f"[INFO] Running gem5 simulation using '{config_file}'")
+    if config_args:
+        print(f"[INFO] Passing to {os.path.basename(config_file)}: "
+              f"{' '.join(config_args)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print("[ERROR]", result.stderr)
@@ -394,7 +415,19 @@ def print_table(results, overhead, clean_file=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run a gem5 RISC-V simulation (C or assembly) and "
-                    "consolidate reports.")
+                    "consolidate reports.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Any flag this script does not define is passed on to the "
+               "configuration,\nso a configuration's own options work here:\n"
+               "\n"
+               "  run_gem5.py gem5_config_CVA6_lab.py daxpy.S "
+               "--port-model --evict-on-allocate\n"
+               "\n"
+               "Put them after a '--' when a flag takes a value or shares a "
+               "name with\none of ours:\n"
+               "\n"
+               "  run_gem5.py gem5_config_CVA6_lab.py daxpy.S -- "
+               "--port-model")
     parser.add_argument("config_file",
                         help="Path to the gem5 configuration file (.py)")
     parser.add_argument("src_file",
@@ -405,7 +438,9 @@ if __name__ == "__main__":
     parser.add_argument("--no-trace", action="store_true",
                         help="Disable collection of detailed debug traces.")
 
-    args = parser.parse_args()
+    own_argv, after_separator = split_own_args(sys.argv[1:])
+    args, unrecognised = parser.parse_known_args(own_argv)
+    config_args = unrecognised + after_separator
 
     config_file = args.config_file
     src_file = args.src_file
@@ -423,7 +458,8 @@ if __name__ == "__main__":
     program_name = os.path.splitext(os.path.basename(src_file))[0]
 
     binary = compile_program(src_file, lang)
-    stats_file = run_gem5(config_file, binary, args.no_trace, program_name)
+    stats_file = run_gem5(config_file, binary, args.no_trace, program_name,
+                          config_args)
 
     clean_file = generate_and_show_codelist(binary, program_name)
 
