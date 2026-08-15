@@ -17,11 +17,14 @@ Run this from the gem5 root, like run_gem5.py. The configuration file is
 restored when the sweep ends, fails or is interrupted.
 """
 import argparse
+import concurrent.futures
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 
 # ==============================================================================
@@ -38,6 +41,16 @@ GEM5_BIN = os.path.join("build", "RISCV", "gem5.opt")
 
 # Where run_gem5.py has gem5 write, cleared after each collected run.
 GEM5_OUT_DIR = "m5out"
+
+# Runs to keep in flight at once. Deliberately below the core count:
+# each holds a gem5 process and writes a trace, so memory and disk
+# bind before cores do.
+DEFAULT_JOBS = min(4, os.cpu_count() or 1)
+
+# How a collected file and a config copy are labelled.
+LABEL = "config"
+SELECTOR_NAME = "TEST"
+UNIT = "configuration"
 
 # Workloads to use for 'all' when the table names none at all. Empty here
 # because the MinorFlow table annotates every entry.
@@ -71,6 +84,19 @@ def find_beside_script(name, what, extra=()):
     print(f"[ERROR] {what} ({name}) not found next to this script or in the "
           f"current directory.")
     sys.exit(2)
+
+
+def split_own_args(argv):
+    """Split the command line into this script's arguments and the ones meant
+    for the configuration.
+
+    Everything after a '--' is the configuration's, verbatim. That is the
+    unambiguous form, and the one to use for a flag that takes a value or that
+    shares a name with one of ours."""
+    if "--" in argv:
+        cut = argv.index("--")
+        return argv[:cut], argv[cut + 1:]
+    return argv, []
 
 
 def parse_table(text):
@@ -221,93 +247,84 @@ def build_plan(table, config_ids, tests_dir, override_tests):
     return plan
 
 
-def select_config(text, config_id, config_path):
-    """Write the configuration file with TEST set to config_id."""
-    new_text, count = SELECTOR_RE.subn(
-        lambda m: f"{m.group(1)}{config_id}{m.group(3)}", text, count=1)
-    if count != 1:
-        print(f"[ERROR] No 'TEST = <n>' line found in {config_path}, so the "
-              f"configuration cannot be selected.")
-        sys.exit(2)
-    with open(config_path, "w") as f:
-        f.write(new_text)
-
-
 def driver_results_dir(runner):
     """The run_results/ folder run_gem5.py copies its keepers into."""
     return os.path.join(os.path.dirname(os.path.abspath(runner)), "run_results")
 
 
-def output_paths(results_dir, test_name):
-    """The three files run_gem5.py leaves in run_results/ for this test."""
-    return {
-        "trace": os.path.join(results_dir, f"{test_name}_trace.txt"),
-        "clean": os.path.join(results_dir, f"{test_name}_clean.txt"),
-        "list": os.path.join(results_dir, f"{test_name}.list"),
-    }
+def job_dirs(runner, label):
+    """The private folders one run works in.
+
+    Each job gets its own, so concurrent runs cannot overwrite each other's
+    stats.txt, trace or binary."""
+    return (os.path.join(GEM5_OUT_DIR, label),
+            os.path.join(driver_results_dir(runner), label))
 
 
-def discard_run(results_dir, test_name):
-    """Delete what this run left behind, once it has been collected.
+def write_config_copy(text, config_id, dest_dir, base_name):
+    """Write a copy of the configuration with the selector set to config_id.
 
-    A debug trace runs to hundreds of megabytes and one is produced per run,
-    so keeping them would cost far more disk than the results are worth. Only
-    this test's files are removed, so a failed run's output survives the rest
-    of the batch."""
-    if os.path.isdir(results_dir):
-        shutil.rmtree(results_dir, ignore_errors=True)
-    for name in (f"{test_name}_trace.txt", f"{test_name}_clean.txt",
-                 f"{test_name}.list"):
-        path = os.path.join(GEM5_OUT_DIR, name)
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-
-def discard_gem5_out():
-    """Remove gem5's output folder, once nothing in it is worth keeping."""
-    if os.path.isdir(GEM5_OUT_DIR):
-        shutil.rmtree(GEM5_OUT_DIR, ignore_errors=True)
+    The sweep runs copies rather than editing the file in place, so the
+    configuration you point it at is never modified, an interrupted sweep
+    leaves nothing to restore, and the runs can go in parallel."""
+    new_text, count = SELECTOR_RE.subn(
+        lambda m: f"{m.group(1)}{config_id}{m.group(3)}", text, count=1)
+    if count != 1:
+        print(f"[ERROR] No '{SELECTOR_NAME} = <n>' line found in the "
+              f"configuration, so the {UNIT} cannot be selected.")
+        sys.exit(2)
+    path = os.path.join(dest_dir, f"{LABEL}{config_id}_{base_name}")
+    with open(path, "w") as f:
+        f.write(new_text)
+    return path
 
 
-def collect(results_dir, test_name, config_id, out_dir, want_trace):
-    """Move this run's three files out under their .config<N> names."""
-    produced = output_paths(results_dir, test_name)
-    wanted = {
-        "trace": f"{test_name}_trace.config{config_id}.txt",
-        "clean": f"{test_name}_clean.config{config_id}.txt",
-        "list": f"{test_name}.config{config_id}.list",
-    }
+def collect(job_results, config_id, out_dir, want_trace):
+    """Move a finished run's three files out under their .LABEL<N> names."""
+    collected = []
+    try:
+        produced = sorted(os.listdir(job_results))
+    except OSError:
+        produced = []
 
-    collected = 0
-    for key, source in produced.items():
-        if key == "trace" and not want_trace:
+    for name in produced:
+        if "_trace." in name and not want_trace:
             continue
-        if not os.path.isfile(source):
-            print(f"[WARN] Expected output missing: {source}")
-            continue
+        stem, ext = os.path.splitext(name)
         try:
-            shutil.move(source, os.path.join(out_dir, wanted[key]))
-            collected += 1
+            shutil.move(os.path.join(job_results, name),
+                        os.path.join(out_dir,
+                                     f"{stem}.{LABEL}{config_id}{ext}"))
+            collected.append(name)
         except OSError as e:
-            print(f"[WARN] Could not collect {source}: {e}")
+            print(f"[WARN] Could not collect {name}: {e}")
 
-    if collected:
-        print(f"[INFO] Collected {collected} file(s) into {out_dir} as "
-              f"{test_name}*.config{config_id}.*")
+    if not collected:
+        print(f"[WARN] Nothing to collect from {job_results}")
     return collected
 
 
-def clear_stale_outputs(results_dir, test_name):
-    """Remove the previous run's files so nothing stale gets collected."""
-    for path in output_paths(results_dir, test_name).values():
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+def discard_run(job_gem5_out, job_results):
+    """Delete a run's working folders, once it has been collected.
+
+    A debug trace runs to hundreds of megabytes and one is produced per run,
+    so keeping them would cost far more disk than the results are worth. Only
+    this run's folders go, so a failed run's output survives the sweep."""
+    for path in (job_gem5_out, job_results):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_empty(path):
+    """Remove a folder the sweep has emptied, leaving anything else alone.
+
+    Deliberately not a recursive delete: a plain run_gem5.py run writes
+    straight into these folders, and that output is not the sweep's to
+    destroy."""
+    try:
+        if os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+    except OSError:
+        pass
 
 
 def format_duration(seconds):
@@ -364,7 +381,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"Always sweeps {DEFAULT_CONFIG}, which it is written for. An "
                f"entry whose\nworkload is 'all' runs every workload named in "
-               f"the table.\nRun this from the gem5 root, like run_gem5.py.")
+               f"the table.\nRun this from the gem5 root, like run_gem5.py.\n"
+               f"\n"
+               f"Any flag this script does not define is passed on to the "
+               f"configuration\nbeing swept, through run_gem5.py and the same "
+               f"for every run of the\nsweep. Put them after a '--' when a "
+               f"flag takes a value or shares a\nname with one of ours.")
     parser.add_argument("--config", default="",
                         help=f"Sweep a different configuration file. The "
                              f"sweep is written for {DEFAULT_CONFIG} and uses "
@@ -380,6 +402,13 @@ def main():
                         help="Comma-separated workloads to run for every "
                              "configuration, instead of the ones the table "
                              "names")
+    parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
+                        help=f"How many runs to keep in flight. Defaults "
+                             f"to {DEFAULT_JOBS} here. gem5 is single-"
+                             f"threaded, so this scales with cores until "
+                             f"memory or disk bandwidth binds. 1 runs "
+                             f"them one by one and streams the output "
+                             f"live")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
                         help=f"Where to collect the results. Defaults to "
                              f"{DEFAULT_OUT_DIR}/")
@@ -388,7 +417,20 @@ def main():
                              "metrics only")
     parser.add_argument("--list", action="store_true",
                         help="Print the plan and exit, touching nothing")
-    args = parser.parse_args()
+    own_argv, after_separator = split_own_args(sys.argv[1:])
+    args, unrecognised = parser.parse_known_args(own_argv)
+
+    # A bare word among the leftovers is a mistyped option far more often than
+    # it is something the configuration wants: a flag that takes a value has to
+    # go after the '--' anyway. Refuse it rather than run the whole sweep with
+    # it, since every run would fail the same way inside gem5.
+    stray = [a for a in unrecognised if not a.startswith("-")]
+    if stray:
+        print(f"[ERROR] Unrecognised argument(s): {' '.join(stray)}. "
+              f"Flags for the configuration are passed straight through; "
+              f"anything that takes a value goes after a '--'.")
+        sys.exit(2)
+    config_args = unrecognised + after_separator
 
     # Keep our output interleaved correctly with each run_gem5.py run.
     if hasattr(sys.stdout, "reconfigure"):
@@ -424,8 +466,11 @@ def main():
     print(f"Config    : {config_path}")
     print(f"Tests dir : {os.path.abspath(args.tests_dir)}")
     print(f"Out dir   : {os.path.abspath(args.out_dir)}")
+    print(f"Jobs      : {max(1, args.jobs)}")
     print(f"Tracing   : "
           f"{'disabled (--no-trace)' if args.no_trace else 'enabled'}")
+    if config_args:
+        print(f"Cfg flags : {' '.join(config_args)}")
     print(SEP + "\n")
 
     if not os.path.isdir(args.tests_dir):
@@ -450,68 +495,111 @@ def main():
         sys.exit(2)
 
     runner = find_beside_script(RUNNER_NAME, "Runner")
-    results_dir = driver_results_dir(runner)
-    os.makedirs(args.out_dir, exist_ok=True)
+    config_dir = tempfile.mkdtemp(prefix="sweep_configs_")
+    out_dir = os.path.abspath(args.out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    jobs = max(1, args.jobs)
 
-    print(f"\n[INFO] Backed up {config_path}, restored when the sweep ends.")
+    base_name = os.path.basename(config_path)
+    print(f"\n[INFO] Sweeping copies of {base_name}. The file itself is "
+          f"never modified.")
 
+    # One lock around the reporting, so a finished run's output arrives as one
+    # block instead of interleaved with another's.
+    report_lock = threading.Lock()
     results = []
     sweep_start = time.time()
 
+    def run_one(index, total, config_id, config_copy, path):
+        test_name = os.path.splitext(os.path.basename(path))[0]
+        label = f"{LABEL}{config_id}_{test_name}"
+        job_gem5_out, job_results = job_dirs(runner, label)
+        # Anything left from an earlier sweep would otherwise be collected.
+        discard_run(job_gem5_out, job_results)
+
+        cmd = [sys.executable, runner, config_copy, path,
+               "--gem5-out-dir", job_gem5_out,
+               "--results-dir", job_results]
+        if args.no_trace:
+            cmd.append("--no-trace")
+        # After a '--', so run_gem5.py hands them to the configuration whatever
+        # they are named.
+        if config_args:
+            cmd.extend(["--"] + config_args)
+
+        start = time.time()
+        if jobs == 1:
+            print("\n" + SEP)
+            print(f"[{index}/{total}] {LABEL}{config_id}: {test_name}")
+            print(SEP + "\n")
+            code = subprocess.run(cmd).returncode
+            output = None
+        else:
+            done = subprocess.run(cmd, capture_output=True, text=True)
+            code, output = done.returncode, done.stdout + done.stderr
+        elapsed = time.time() - start
+
+        with report_lock:
+            if output is not None:
+                print("\n" + SEP)
+                print(f"[{index}/{total}] {LABEL}{config_id}: {test_name}")
+                print(SEP + "\n")
+                print(output, end="" if output.endswith("\n") else "\n")
+            if code != 0:
+                # Leave the outputs in place: they are what there is to
+                # debug with.
+                print(f"[WARN] '{test_name}' failed with exit code {code}. "
+                      f"Its output is left in {job_gem5_out}. Continuing.")
+            else:
+                collected = collect(job_results, config_id, out_dir,
+                                    not args.no_trace)
+                if collected:
+                    print(f"[INFO] Collected {len(collected)} file(s) into "
+                          f"{out_dir} as *.{LABEL}{config_id}.*")
+                discard_run(job_gem5_out, job_results)
+            results.append((index, config_id, test_name, code, elapsed))
+
     try:
-        for config_id, description, paths in plan:
+        # One copy of the configuration per id, each with its selector set.
+        queue = []
+        for entry in plan:
+            config_id, paths = entry[0], entry[-1]
             if not paths:
                 continue
+            config_copy = write_config_copy(config_text, config_id,
+                                            config_dir, base_name)
+            for path in paths:
+                queue.append((config_id, config_copy, path))
 
-            print("\n" + SEP)
-            print(f"config{config_id}: {description}")
-            print(SEP)
-            select_config(config_text, config_id, config_path)
-            print(f"[INFO] TEST = {config_id}\n")
-
-            for index, path in enumerate(paths, 1):
-                test_name = os.path.splitext(os.path.basename(path))[0]
-                print("\n" + "-" * 70)
-                print(f"[config{config_id}] [{index}/{len(paths)}] "
-                      f"{os.path.basename(path)}")
-                print("-" * 70 + "\n")
-
-                clear_stale_outputs(results_dir, test_name)
-
-                cmd = [sys.executable, runner, config_path, path]
-                if args.no_trace:
-                    cmd.append("--no-trace")
-
-                start = time.time()
-                code = subprocess.run(cmd).returncode
-                elapsed = time.time() - start
-
-                if code != 0:
-                    # Leave the outputs in place: they are what there is
-                    # to debug with.
-                    print(f"\n[WARN] '{test_name}' failed with exit code "
-                          f"{code}. Continuing with the rest.")
-                else:
-                    collect(results_dir, test_name, config_id,
-                            args.out_dir, not args.no_trace)
-                    discard_run(results_dir, test_name)
-                results.append((config_id, test_name, code, elapsed))
-
+        total = len(queue)
+        if jobs > 1:
+            print(f"[INFO] Running {jobs} at a time.\n")
+        if jobs == 1:
+            for index, (cid, copy, path) in enumerate(queue, 1):
+                run_one(index, total, cid, copy, path)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
+                for future in [pool.submit(run_one, i, total, cid, copy, path)
+                               for i, (cid, copy, path)
+                               in enumerate(queue, 1)]:
+                    future.result()
     except KeyboardInterrupt:
         print("\n[WARN] Interrupted. Stopping the sweep.")
     finally:
-        with open(config_path, "w") as f:
-            f.write(config_text)
-        print(f"\n[INFO] Restored {config_path}")
+        shutil.rmtree(config_dir, ignore_errors=True)
 
-    failed = print_summary(results, time.time() - sweep_start)
-    print(f"[INFO] Results in {os.path.abspath(args.out_dir)}")
+    # Report in plan order, not the order the runs finished.
+    ordered = [(cid, name, code, elapsed)
+               for _, cid, name, code, elapsed in sorted(results)]
+    failed = print_summary(ordered, time.time() - sweep_start)
+    print(f"[INFO] Results in {out_dir}")
     if failed:
-        print(f"[INFO] The failed run(s) left their output in "
+        print(f"[INFO] The failed run(s) left their output under "
               f"{os.path.abspath(GEM5_OUT_DIR)}")
-    else:
-        # Nothing in there is worth keeping now, so take the folder with it.
-        discard_gem5_out()
+    # Whatever the sweep emptied goes; anything a plain run_gem5.py run left
+    # in there stays.
+    prune_empty(driver_results_dir(runner))
+    prune_empty(GEM5_OUT_DIR)
     return 1 if failed else 0
 
 

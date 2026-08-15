@@ -75,6 +75,8 @@ What it does, in order:
 4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. The table is appended to `m5out/<test>_clean.txt` alongside the disassembly.
 5. **Copies out the keepers.** The trace, the `.list` and the `_clean.txt` are copied into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
 
+The test is compiled into the gem5 output folder rather than beside the source, so a run touches nothing outside its own folders. `--gem5-out-dir` and `--results-dir` move those folders, which is how the sweep gives concurrent runs one each.
+
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
 
 A configuration script may define options of its own. Any flag `run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
@@ -116,15 +118,16 @@ python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--no-trace] 
 | `--out-dir` | Where results are collected. Defaults to `MinorFlow_sweep_results/` |
 | `--config` | Sweep a copy or a variant of `gem5_config_MinorFlow.py` instead |
 | `--no-trace` | Metrics only, no traces |
+| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds |
 | `--list` | Print the plan and exit, touching nothing |
 
 For each configuration it sets `TEST` and runs that entry's workloads through [`run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
 Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_clean.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from.
 
-Once a run is collected its leftovers are deleted: `run_results/`, and that run's files in `m5out/`. A run that **fails** is the exception: nothing of its is collected or deleted, so its output survives the rest of the sweep and is still in `m5out/` at the end. If nothing failed, `m5out/` goes too.
+Each run works in its own folder under `m5out/` and `run_results/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `run_gem5.py` run writes into them too.
 
-Selecting a configuration means editing `TEST` in the configuration file, so the script backs it up and restores it when the sweep ends, fails or is interrupted. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
+The sweep never edits `gem5_config_MinorFlow.py`: it writes one temporary copy per configuration with `TEST` set, runs those, and deletes them at the end. So an interrupted sweep leaves nothing to restore, and two sweeps can run at once. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
 
 ## Why a separate tracer
 

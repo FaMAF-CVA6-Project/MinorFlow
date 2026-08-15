@@ -119,6 +119,66 @@ PRETTY_NAMES = {
 }
 
 
+def format_cache_size(value):
+    """Render a cache size as KiB/MiB. Accepts a byte count or a gem5 string."""
+    text = str(value).strip()
+    if not text:
+        return "?"
+    if not text.isdigit():
+        return text                     # already something like '16KiB'
+    num = int(text)
+    for unit, step in (("MiB", 1024 * 1024), ("KiB", 1024)):
+        if num >= step and num % step == 0:
+            return f"{num // step}{unit}"
+    return f"{num}B"
+
+
+def read_cache_geometry(out_dir):
+    """Read the L1 geometry gem5 actually instantiated.
+
+    gem5 dumps config.ini next to stats.txt on every run, so this reports the
+    caches the simulation was built with rather than the defaults written in
+    the configuration file."""
+    geometry = {}
+    section = ""
+    config_path = os.path.join(out_dir, "config.ini")
+    try:
+        with open(config_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    section = line[1:-1].lower()
+                    continue
+                key, sep, value = line.partition("=")
+                key = key.strip()
+                if not sep or key not in ("size", "assoc"):
+                    continue
+                for tag, name in (("l1icache", "icache"), ("l1dcache", "dcache")):
+                    if tag in section:
+                        geometry.setdefault(name, {})[key] = value.strip()
+    except OSError as e:
+        print(f"[WARN] Could not read {config_path}: {e}. "
+              f"The cache geometry is reported as '?'")
+        return {}
+
+    for name in ("icache", "dcache"):
+        if not geometry.get(name):
+            print(f"[WARN] No L1 {name[0]}-cache section in {config_path}. "
+                  f"Its geometry is reported as '?'")
+    return geometry
+
+
+def build_table_header(engine, program, geometry):
+    """One-line table title: engine, program, and the two L1 geometries."""
+    parts = [f"RESULTS TABLE {engine} {program}"]
+    for name, label in (("icache", "ICache"), ("dcache", "DCache")):
+        cache = geometry.get(name, {})
+        size = format_cache_size(cache.get("size", ""))
+        assoc = cache.get("assoc") or "?"
+        parts.append(f"{label}: {size}/{assoc}")
+    return "  ".join(parts)
+
+
 def detect_lang(src_file, override):
     """Decide whether the input is C or assembly."""
     if override in ("c", "asm"):
@@ -137,11 +197,16 @@ def detect_lang(src_file, override):
     return "c"
 
 
-def compile_program(src_file, lang):
-    """Compile src_file according to its type (C or asm). Return the binary path."""
-    source_dir = os.path.dirname(src_file)
+def compile_program(src_file, lang, out_dir):
+    """Compile src_file according to its type (C or asm). Return the binary
+    path.
+
+    The binary is built inside out_dir rather than beside the source, so that
+    the whole run stays in one place and two runs of the same test cannot
+    write the same file."""
     base_name = os.path.splitext(os.path.basename(src_file))[0]
-    bin_file = os.path.join(source_dir, base_name) if source_dir else base_name
+    os.makedirs(out_dir, exist_ok=True)
+    bin_file = os.path.join(out_dir, base_name)
 
     print(f"[INFO] Compiling ({lang}) {src_file} -> {bin_file}")
 
@@ -179,8 +244,8 @@ def split_own_args(argv):
     return argv, []
 
 
-def run_gem5(config_file, bin_file, no_trace, program_name, config_args=()):
-    out_dir = GEM5_OUT_DIR
+def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
+             config_args=()):
     os.makedirs(out_dir, exist_ok=True)
 
     stats_path = os.path.join(out_dir, "stats.txt")
@@ -218,8 +283,7 @@ def run_gem5(config_file, bin_file, no_trace, program_name, config_args=()):
     return stats_path
 
 
-def generate_and_show_codelist(bin_file, program_name):
-    out_dir = GEM5_OUT_DIR
+def generate_and_show_codelist(bin_file, program_name, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     list_file = os.path.join(out_dir, f"{program_name}.list")
     clean_file = os.path.join(out_dir, f"{program_name}_clean.txt")
@@ -255,34 +319,34 @@ def generate_and_show_codelist(bin_file, program_name):
     return clean_file
 
 
-def collect_results(program_name):
+def collect_results(program_name, out_dir, results_dir):
     """Copy the three files worth keeping into run_results/, next to this script.
 
     The trace is what the viewer renders, the .list is the disassembly, and
     the _clean.txt is the measured region plus the metrics table. The
-    originals are left in GEM5_OUT_DIR."""
+    originals are left in out_dir."""
     try:
-        os.makedirs(RESULTS_DIR, exist_ok=True)
+        os.makedirs(results_dir, exist_ok=True)
     except OSError as e:
-        print(f"[WARN] Could not create {RESULTS_DIR}: {e}")
+        print(f"[WARN] Could not create {results_dir}: {e}")
         return
 
     copied = []
     for name in (f"{program_name}_trace.txt", f"{program_name}.list",
                  f"{program_name}_clean.txt"):
-        source = os.path.join(GEM5_OUT_DIR, name)
+        source = os.path.join(out_dir, name)
         # With --no-trace there is no trace to copy, so a missing source here
         # is expected rather than a problem.
         if not os.path.isfile(source):
             continue
         try:
-            shutil.copy2(source, os.path.join(RESULTS_DIR, name))
+            shutil.copy2(source, os.path.join(results_dir, name))
             copied.append(name)
         except OSError as e:
             print(f"[WARN] Could not copy {source}: {e}")
 
     if copied:
-        print(f"[INFO] Copied to {RESULTS_DIR}: {', '.join(copied)}")
+        print(f"[INFO] Copied to {results_dir}: {', '.join(copied)}")
 
 
 def parse_stats(stats_path):
@@ -337,14 +401,17 @@ def parse_stats(stats_path):
     return results
 
 
-def print_table(results, overhead, clean_file=None):
+def print_table(results, overhead, clean_file=None, header="RESULTS TABLE"):
     output_buffer = []
 
-    output_buffer.append("\n" + "=" * 70)
-    output_buffer.append("RESULTS TABLE")
-    output_buffer.append("=" * 70)
+    # The rule is widened when the title is longer, so the box never breaks.
+    width = max(70, len(header))
+
+    output_buffer.append("\n" + "=" * width)
+    output_buffer.append(header)
+    output_buffer.append("=" * width)
     output_buffer.append(f"{'METRIC':<25} | {'OFFICIAL':>15} | {'NET':>15}")
-    output_buffer.append("=" * 70)
+    output_buffer.append("=" * width)
 
     keys_order = ["numCycles", "numInsts", "icache_miss", "dcache_miss",
                   "icache_access", "dcache_access", "branch_pred",
@@ -393,7 +460,7 @@ def print_table(results, overhead, clean_file=None):
 
         output_buffer.append(f"{label:<25} | {fmt_off:>15} | {fmt_cor:>15}")
 
-    output_buffer.append("=" * 70 + "\n")
+    output_buffer.append("=" * width + "\n")
     output_buffer.append(f"Clean result (OFFICIAL):  {clean_array_official}")
     output_buffer.append(
         f"Clean result (NET):       {clean_array_corrected}\n")
@@ -420,14 +487,14 @@ if __name__ == "__main__":
         epilog="Any flag this script does not define is passed on to the "
                "configuration,\nso a configuration's own options work here:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_lab.py daxpy.S "
-               "--port-model --evict-on-allocate\n"
+               "  run_gem5.py gem5_config_CVA6.py daxpy.S "
+               "--no-port-model --no-fill-phase\n"
                "\n"
                "Put them after a '--' when a flag takes a value or shares a "
                "name with\none of ours:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_lab.py daxpy.S -- "
-               "--port-model")
+               "  run_gem5.py gem5_config_CVA6.py daxpy.S -- "
+               "--no-port-model")
     parser.add_argument("config_file",
                         help="Path to the gem5 configuration file (.py)")
     parser.add_argument("src_file",
@@ -437,6 +504,15 @@ if __name__ == "__main__":
                              "Defaults to detection by extension.")
     parser.add_argument("--no-trace", action="store_true",
                         help="Disable collection of detailed debug traces.")
+    parser.add_argument("--gem5-out-dir", default=GEM5_OUT_DIR,
+                        help=f"Where gem5 writes, and where the test is "
+                             f"compiled. Defaults to {GEM5_OUT_DIR}/. Give "
+                             f"concurrent runs one each, so they cannot "
+                             f"overwrite each other's stats.txt")
+    parser.add_argument("--results-dir", default=RESULTS_DIR,
+                        help="Where the three files worth keeping are "
+                             "copied. Defaults to run_results/ next to this "
+                             "script")
 
     own_argv, after_separator = split_own_args(sys.argv[1:])
     args, unrecognised = parser.parse_known_args(own_argv)
@@ -457,14 +533,17 @@ if __name__ == "__main__":
 
     program_name = os.path.splitext(os.path.basename(src_file))[0]
 
-    binary = compile_program(src_file, lang)
+    binary = compile_program(src_file, lang, args.gem5_out_dir)
     stats_file = run_gem5(config_file, binary, args.no_trace, program_name,
-                          config_args)
+                          args.gem5_out_dir, config_args)
 
-    clean_file = generate_and_show_codelist(binary, program_name)
+    clean_file = generate_and_show_codelist(binary, program_name,
+                                            args.gem5_out_dir)
 
     metrics = parse_stats(stats_file)
-    print_table(metrics, overhead, clean_file)
+    geometry = read_cache_geometry(args.gem5_out_dir)
+    header = build_table_header("gem5", os.path.basename(src_file), geometry)
+    print_table(metrics, overhead, clean_file, header)
 
     # Done last, so the _clean.txt copied out already carries the table.
-    collect_results(program_name)
+    collect_results(program_name, args.gem5_out_dir, args.results_dir)
