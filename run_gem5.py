@@ -48,6 +48,13 @@ C_EXTRA_CFLAGS = ["-fno-builtin", "-e", "main"]
 C_EXTS = {".c"}
 ASM_EXTS = {".s", ".asm", ".sx"}   # .S is handled separately (case-sensitive)
 
+# The _clean.txt holds two sections: the measured region of the disassembly,
+# then the metrics table.
+RULE = "=" * 70
+METRICS_MARKER = "RESULTS TABLE"
+CODE_BANNER = [RULE, "DISASSEMBLED CODE", RULE]
+CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
+
 # ==============================================================================
 # OVERHEAD PROFILES (CVA6 configuration)
 # ==============================================================================
@@ -168,15 +175,19 @@ def read_cache_geometry(out_dir):
     return geometry
 
 
-def build_table_header(engine, program, geometry):
-    """One-line table title: engine, program, and the two L1 geometries."""
+def build_table_header(engine, config, program, geometry):
+    """The table title, over two lines.
+
+    What was measured goes on the first, and the configuration the core was
+    modelled from on the second, since the configuration and its flags are
+    long enough to push the title well past the width of the table."""
     parts = [f"RESULTS TABLE {engine} {program}"]
     for name, label in (("icache", "ICache"), ("dcache", "DCache")):
         cache = geometry.get(name, {})
         size = format_cache_size(cache.get("size", ""))
         assoc = cache.get("assoc") or "?"
         parts.append(f"{label}: {size}/{assoc}")
-    return "  ".join(parts)
+    return ["  ".join(parts), f"Config: {config}"]
 
 
 def detect_lang(src_file, override):
@@ -299,32 +310,40 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
         print("[ERROR]", e)
         sys.exit(1)
 
-    print("\n" + "=" * 70)
-    print("DISASSEMBLED CODE")
-    print("=" * 70)
+    print()
+    for line in CODE_BANNER:
+        print(line)
 
     try:
         with open(list_file, "r") as f, open(clean_file, "w") as f_clean:
+            f_clean.write("\n".join(CODE_BANNER) + "\n")
+            last = "\n"
             for line in f:
                 print(line, end='')
                 f_clean.write(line)
+                last = line
                 if "jal" in line and "<m5_dump_stats>" in line:
                     break
+            if not last.endswith("\n"):
+                f_clean.write("\n")
+            f_clean.write("\n".join(CODE_END_BANNER) + "\n")
     except FileNotFoundError:
         print(f"[WARN] Could not read the generated file {list_file}")
         return None
 
-    print("\n" + "=" * 70 + "\n")
+    for line in CODE_END_BANNER:
+        print(line)
+    print()
     print(f"[INFO] Clean file saved in: {clean_file}")
     return clean_file
 
 
 def collect_results(program_name, out_dir, results_dir):
-    """Copy the three files worth keeping into run_results/, next to this script.
+    """Copy the four files worth keeping into run_results/, next to this script.
 
-    The trace is what the viewer renders, the .list is the disassembly, and
-    the _clean.txt is the measured region plus the metrics table. The
-    originals are left in out_dir."""
+    The trace is what the viewer renders, the .list is the disassembly, the
+    _clean.txt is the measured region plus the metrics table, and the stats
+    are gem5's own numbers behind that table."""
     try:
         os.makedirs(results_dir, exist_ok=True)
     except OSError as e:
@@ -332,16 +351,19 @@ def collect_results(program_name, out_dir, results_dir):
         return
 
     copied = []
-    for name in (f"{program_name}_trace.txt", f"{program_name}.list",
-                 f"{program_name}_clean.txt"):
+    for name, kept_as in ((f"{program_name}_trace.txt", None),
+                          (f"{program_name}.list", None),
+                          (f"{program_name}_clean.txt", None),
+                          ("stats.txt", f"{program_name}_stats.txt")):
         source = os.path.join(out_dir, name)
         # With --no-trace there is no trace to copy, so a missing source here
         # is expected rather than a problem.
         if not os.path.isfile(source):
             continue
+        kept_as = kept_as or name
         try:
-            shutil.copy2(source, os.path.join(results_dir, name))
-            copied.append(name)
+            shutil.copy2(source, os.path.join(results_dir, kept_as))
+            copied.append(kept_as)
         except OSError as e:
             print(f"[WARN] Could not copy {source}: {e}")
 
@@ -401,14 +423,14 @@ def parse_stats(stats_path):
     return results
 
 
-def print_table(results, overhead, clean_file=None, header="RESULTS TABLE"):
+def print_table(results, overhead, clean_file=None, header=("RESULTS TABLE",)):
     output_buffer = []
 
     # The rule is widened when the title is longer, so the box never breaks.
-    width = max(70, len(header))
+    width = max(70, max(len(line) for line in header))
 
     output_buffer.append("\n" + "=" * width)
-    output_buffer.append(header)
+    output_buffer.extend(header)
     output_buffer.append("=" * width)
     output_buffer.append(f"{'METRIC':<25} | {'OFFICIAL':>15} | {'NET':>15}")
     output_buffer.append("=" * width)
@@ -471,7 +493,7 @@ def print_table(results, overhead, clean_file=None, header="RESULTS TABLE"):
     if clean_file and os.path.exists(clean_file):
         try:
             with open(clean_file, "a") as f_clean:
-                f_clean.write("\n\n")
+                # output_buffer opens with its own blank line.
                 for line in output_buffer:
                     f_clean.write(line + "\n")
             print(f"[INFO] Metrics successfully consolidated in: {clean_file}")
@@ -510,7 +532,7 @@ if __name__ == "__main__":
                              f"concurrent runs one each, so they cannot "
                              f"overwrite each other's stats.txt")
     parser.add_argument("--results-dir", default=RESULTS_DIR,
-                        help="Where the three files worth keeping are "
+                        help="Where the four files worth keeping are "
                              "copied. Defaults to run_results/ next to this "
                              "script")
 
@@ -542,7 +564,11 @@ if __name__ == "__main__":
 
     metrics = parse_stats(stats_file)
     geometry = read_cache_geometry(args.gem5_out_dir)
-    header = build_table_header("gem5", os.path.basename(src_file), geometry)
+    # The flags ride along: they are what separates one run of a configuration
+    # from another, so a table without them cannot be told apart.
+    config_label = " ".join([os.path.basename(config_file)] + list(config_args))
+    header = build_table_header("gem5", config_label,
+                                os.path.basename(src_file), geometry)
     print_table(metrics, overhead, clean_file, header)
 
     # Done last, so the _clean.txt copied out already carries the table.
