@@ -22,5 +22,5 @@ main:
   nop
   .endr
 
-# SALIDA
+# EXIT
   call     m5_exit

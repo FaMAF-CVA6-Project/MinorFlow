@@ -1,6 +1,6 @@
 #include <gem5/m5ops.h>
 
-#define N 8
+#define N 4
 
 static int A[N][N];
 static int B[N][N];

@@ -48,4 +48,5 @@ main:
   nop
   .endr
 
+# EXIT
   call     m5_exit
