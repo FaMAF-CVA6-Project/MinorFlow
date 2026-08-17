@@ -10,8 +10,10 @@ sets TEST to it and runs only the workloads that entry was made for:
 An entry whose workload is 'all' runs every workload named anywhere in the
 table, which is the set the sweep has been exercised with.
 
-Outputs are collected as <test>_trace.config<N>.txt, <test>_clean.config<N>.txt
-and <test>.config<N>.list so one configuration's results never overwrite another's.
+Outputs are collected as <test>_trace.config<N>.txt, <test>_clean.config<N>.txt,
+<test>_stats.config<N>.txt and <test>.config<N>.list, so one configuration's
+results never overwrite another's. Every metrics table is also gathered into
+a single metrics.txt.
 
 Run this from the gem5 root, like run_gem5.py. The configuration file is
 restored when the sweep ends, fails or is interrupted.
@@ -31,7 +33,7 @@ import time
 # CONFIGURATION
 # ==============================================================================
 DEFAULT_CONFIG = "gem5_config_MinorFlow.py"
-DEFAULT_TESTS_DIR = "programs"
+DEFAULT_TESTS_DIR = "MinorFlow_benchmarks"
 DEFAULT_OUT_DIR = "MinorFlow_sweep_results"
 
 RUNNER_NAME = "run_gem5.py"
@@ -70,6 +72,11 @@ CONTINUATION_RE = re.compile(r'^#\s{4,}(\S.*)$')
 SELECTOR_RE = re.compile(r'^(TEST[ \t]*=[ \t]*)(\d+)([ \t]*(?:#.*)?)$', re.M)
 
 SEP = "=" * 70
+
+# What the runner writes above its metrics table, and where the sweep gathers
+# every one of those tables once the runs are done.
+METRICS_MARKER = "RESULTS TABLE"
+METRICS_FILE = "metrics.txt"
 
 
 def find_beside_script(name, what, extra=()):
@@ -152,15 +159,36 @@ def suggest(name, tests_dir):
         entries = sorted(os.listdir(tests_dir))
     except OSError:
         return []
+    # Compare on the stem, so a workload typed with an extension or as a
+    # path still finds its neighbours.
+    stem = os.path.splitext(os.path.basename(name))[0].lower()
     return [e for e in entries
             if os.path.splitext(e)[1] in EXT_PRIORITY
-            and name.lower() in os.path.splitext(e)[0].lower()]
+            and stem in os.path.splitext(e)[0].lower()]
 
 
 def resolve_test_file(name, tests_dir):
-    """Turn a workload name into a path, trying the known extensions."""
-    matches = [os.path.join(tests_dir, name + ext) for ext in EXT_PRIORITY
-               if os.path.isfile(os.path.join(tests_dir, name + ext))]
+    """Turn a workload into a path.
+
+    The table writes a workload as a bare name, but a name carrying its
+    extension and a path to a file are what a person naturally types on
+    --tests, so all three resolve rather than only the first."""
+    # A path, absolute or relative to the working directory, taken as given.
+    if os.path.isfile(name):
+        return name
+
+    stem, ext = os.path.splitext(name)
+    if ext in EXT_PRIORITY:
+        # A name that already carries its extension, inside the tests folder.
+        candidate = os.path.join(tests_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+        # Fall through on the stem: the same workload under a different
+        # extension is a likelier intent than no match at all.
+        name = stem
+
+    matches = [os.path.join(tests_dir, name + e) for e in EXT_PRIORITY
+               if os.path.isfile(os.path.join(tests_dir, name + e))]
     if not matches:
         return None
     if len(matches) > 1:
@@ -280,7 +308,7 @@ def write_config_copy(text, config_id, dest_dir, base_name):
 
 
 def collect(job_results, config_id, out_dir, want_trace):
-    """Move a finished run's three files out under their .LABEL<N> names."""
+    """Move a finished run's four files out under their .LABEL<N> names."""
     collected = []
     try:
         produced = sorted(os.listdir(job_results))
@@ -325,6 +353,64 @@ def prune_empty(path):
             os.rmdir(path)
     except OSError:
         pass
+
+
+def extract_metrics(clean_path):
+    """The metrics section of a _clean.txt, or None if it holds none.
+
+    A _clean.txt is the measured region of the disassembly followed by the
+    metrics table, so everything from the rule above the table's title to the
+    end of the file is the section wanted here."""
+    try:
+        with open(clean_path) as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        print(f"[WARN] Could not read {clean_path}: {e}")
+        return None
+
+    for i, line in enumerate(lines):
+        if line.startswith(METRICS_MARKER):
+            # Take the rule above the title too, so the block arrives boxed.
+            start = i - 1 if i and set(lines[i - 1]) == {"="} else i
+            return "\n".join(lines[start:]).rstrip()
+
+    return None
+
+
+def write_metrics_file(out_dir, entries, info):
+    """Gather every run's metrics table into one metrics.txt.
+
+    entries is [(label, clean file)] in plan order, so the file reads in the
+    same order as the summary above it. A run whose table is missing is named
+    rather than skipped silently."""
+    blocks, missing = [], []
+    for label, clean_path in entries:
+        block = extract_metrics(clean_path)
+        if block is None:
+            missing.append(label)
+            continue
+        blocks.append(f">>> {label}\n{block}")
+
+    if missing:
+        print(f"[WARN] No metrics table for: {', '.join(missing)}")
+    if not blocks:
+        print(f"[WARN] No metrics tables found, so no {METRICS_FILE} written")
+        return None
+
+    path = os.path.join(out_dir, METRICS_FILE)
+    try:
+        with open(path, "w") as f:
+            f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
+            for line in info:
+                f.write(line + "\n")
+            f.write(f"{SEP}\n\n")
+            f.write("\n\n".join(blocks) + "\n")
+    except OSError as e:
+        print(f"[WARN] Could not write {path}: {e}")
+        return None
+
+    print(f"[INFO] {len(blocks)} metrics table(s) gathered in {path}")
+    return path
 
 
 def format_duration(seconds):
@@ -401,7 +487,8 @@ def main():
     parser.add_argument("--tests", default="",
                         help="Comma-separated workloads to run for every "
                              "configuration, instead of the ones the table "
-                             "names")
+                             "names. A bare name, a file name with its "
+                             "extension, or a path all work")
     parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
                         help=f"How many runs to keep in flight. Defaults "
                              f"to {DEFAULT_JOBS} here. gem5 is single-"
@@ -592,6 +679,18 @@ def main():
     ordered = [(cid, name, code, elapsed)
                for _, cid, name, code, elapsed in sorted(results)]
     failed = print_summary(ordered, time.time() - sweep_start)
+
+    # Only a run that passed left a table behind to gather.
+    write_metrics_file(
+        out_dir,
+        [(f"{LABEL}{cid} / {name}",
+          os.path.join(out_dir, f"{name}_clean.{LABEL}{cid}.txt"))
+         for cid, name, code, _ in ordered if code == 0],
+        [f"Config   : {base_name}",
+         f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
+         f"Tests dir: {os.path.abspath(args.tests_dir)}",
+         f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"])
+
     print(f"[INFO] Results in {out_dir}")
     if failed:
         print(f"[INFO] The failed run(s) left their output under "
