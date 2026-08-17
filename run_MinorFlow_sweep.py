@@ -332,6 +332,22 @@ def collect(job_results, config_id, out_dir, want_trace):
     return collected
 
 
+def keep_failed_config(config_copy, job_gem5_out):
+    """Save the configuration a failed run used, beside that run's output.
+
+    The copies live in a temporary folder that is deleted when the sweep ends,
+    so without this the traceback from a failed run names a path that no
+    longer exists by the time anyone reads it."""
+    try:
+        os.makedirs(job_gem5_out, exist_ok=True)
+        dest = os.path.join(job_gem5_out, os.path.basename(config_copy))
+        shutil.copy2(config_copy, dest)
+        return dest
+    except OSError as e:
+        print(f"[WARN] Could not keep the configuration copy: {e}")
+        return None
+
+
 def discard_run(job_gem5_out, job_results):
     """Delete a run's working folders, once it has been collected.
 
@@ -634,9 +650,14 @@ def main():
                 print(output, end="" if output.endswith("\n") else "\n")
             if code != 0:
                 # Leave the outputs in place: they are what there is to
-                # debug with.
+                # debug with. run_gem5.py writes the whole of gem5's stdout
+                # and stderr into that folder as <test>_error.log.
+                kept = keep_failed_config(config_copy, job_gem5_out)
                 print(f"[WARN] '{test_name}' failed with exit code {code}. "
                       f"Its output is left in {job_gem5_out}. Continuing.")
+                if kept:
+                    print(f"[WARN] The configuration it ran is kept as "
+                          f"{kept}")
             else:
                 collected = collect(job_results, config_id, out_dir,
                                     not args.no_trace)

@@ -55,6 +55,10 @@ METRICS_MARKER = "RESULTS TABLE"
 CODE_BANNER = [RULE, "DISASSEMBLED CODE", RULE]
 CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
 
+# Lines of each captured stream echoed when a step fails. The whole of both
+# goes to the log either way; this is only what the terminal is worth.
+ERROR_TAIL_LINES = 40
+
 # ==============================================================================
 # OVERHEAD PROFILES (CVA6 configuration)
 # ==============================================================================
@@ -208,6 +212,45 @@ def detect_lang(src_file, override):
     return "c"
 
 
+def report_failure(what, cmd, result, out_dir, program_name):
+    """Say why a step failed, and leave the whole of it on disk.
+
+    A failure is the one case where the output matters most, so both streams
+    go to a log inside out_dir and the end of each is printed. gem5 puts its
+    Python traceback on stderr but its own warnings, and often the line that
+    explains the traceback, on stdout, so neither alone is the failure."""
+    log_path = os.path.join(out_dir, f"{program_name}_error.log")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(log_path, "w") as f:
+            f.write(f"$ {' '.join(cmd)}\n\nexit code: {result.returncode}\n")
+            f.write(f"\n----- stdout -----\n{result.stdout or '(empty)'}\n")
+            f.write(f"\n----- stderr -----\n{result.stderr or '(empty)'}\n")
+    except OSError as e:
+        print(f"[WARN] Could not write the failure log: {e}")
+        log_path = None
+
+    print(f"[ERROR] {what} failed with exit code {result.returncode}")
+    print(f"[ERROR] Command: {' '.join(cmd)}")
+
+    for name in ("stderr", "stdout"):
+        text = (getattr(result, name) or "").strip()
+        if not text:
+            continue
+        lines = text.splitlines()
+        shown = lines[-ERROR_TAIL_LINES:]
+        if len(lines) > len(shown):
+            print(f"[ERROR] --- last {len(shown)} of {len(lines)} {name} "
+                  f"lines ---")
+        else:
+            print(f"[ERROR] --- {name} ---")
+        for line in shown:
+            print(f"  {line}")
+
+    if log_path:
+        print(f"[ERROR] Full output: {log_path}")
+
+
 def compile_program(src_file, lang, out_dir):
     """Compile src_file according to its type (C or asm). Return the binary
     path.
@@ -233,7 +276,7 @@ def compile_program(src_file, lang, out_dir):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print("[ERROR]", result.stderr)
+            report_failure("Compilation", cmd, result, out_dir, base_name)
             sys.exit(1)
     except FileNotFoundError:
         print(f"[ERROR] Compiler not found: {GCC_CMD}")
@@ -289,7 +332,7 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
               f"{' '.join(config_args)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print("[ERROR]", result.stderr)
+        report_failure("gem5", cmd, result, out_dir, program_name)
         sys.exit(1)
     return stats_path
 
