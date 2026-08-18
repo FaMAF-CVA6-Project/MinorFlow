@@ -73,7 +73,9 @@ What it does, in order:
 2. **Runs gem5** into `m5out/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `m5out/<test>_trace.txt`. That file is the tracer's input.
 3. **Disassembles.** `objdump -d -S -l` into `m5out/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `m5out/<test>_report.txt`, under a `DISASSEMBLED CODE` banner and closed by an `END OF DISASSEMBLED CODE` one.
 4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. The table is appended to `m5out/<test>_report.txt` below the disassembly, in its own banner, so the two sections can be told apart at a glance. Its title line names the simulator, the program and the L1 geometry the run used, read from gem5's `config.ini`, and the line under it names the configuration file and the flags it was given.
-5. **Copies out the keepers.** The trace, the `.list`, the `_report.txt` and `stats.txt` renamed to `<test>_stats.txt` are copied into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
+5. **Copies out the keepers.** The trace, the `.list`, the `_report.txt` and `stats.txt` renamed to `<test>_stats.txt` go into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
+
+If a run fails nothing is deleted, and gem5's whole stdout and stderr are written to `<test>_error.log` in the output folder, with the end of it printed.
 
 The test is compiled into the gem5 output folder rather than beside the source, so a run touches nothing outside its own folders. `--gem5-out-dir` and `--results-dir` move those folders, which is how the sweep gives concurrent runs one each.
 
