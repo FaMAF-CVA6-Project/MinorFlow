@@ -48,7 +48,7 @@ C_EXTRA_CFLAGS = ["-fno-builtin", "-e", "main"]
 C_EXTS = {".c"}
 ASM_EXTS = {".s", ".asm", ".sx"}   # .S is handled separately (case-sensitive)
 
-# The _clean.txt holds two sections: the measured region of the disassembly,
+# The _report.txt holds two sections: the measured region of the disassembly,
 # then the metrics table.
 RULE = "=" * 70
 METRICS_MARKER = "RESULTS TABLE"
@@ -340,7 +340,7 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
 def generate_and_show_codelist(bin_file, program_name, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     list_file = os.path.join(out_dir, f"{program_name}.list")
-    clean_file = os.path.join(out_dir, f"{program_name}_clean.txt")
+    report_file = os.path.join(out_dir, f"{program_name}_report.txt")
 
     print(f"[INFO] Generating disassembled code in: {list_file}")
 
@@ -358,18 +358,18 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
         print(line)
 
     try:
-        with open(list_file, "r") as f, open(clean_file, "w") as f_clean:
-            f_clean.write("\n".join(CODE_BANNER) + "\n")
+        with open(list_file, "r") as f, open(report_file, "w") as f_report:
+            f_report.write("\n".join(CODE_BANNER) + "\n")
             last = "\n"
             for line in f:
                 print(line, end='')
-                f_clean.write(line)
+                f_report.write(line)
                 last = line
                 if "jal" in line and "<m5_dump_stats>" in line:
                     break
             if not last.endswith("\n"):
-                f_clean.write("\n")
-            f_clean.write("\n".join(CODE_END_BANNER) + "\n")
+                f_report.write("\n")
+            f_report.write("\n".join(CODE_END_BANNER) + "\n")
     except FileNotFoundError:
         print(f"[WARN] Could not read the generated file {list_file}")
         return None
@@ -377,15 +377,15 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
     for line in CODE_END_BANNER:
         print(line)
     print()
-    print(f"[INFO] Clean file saved in: {clean_file}")
-    return clean_file
+    print(f"[INFO] Clean file saved in: {report_file}")
+    return report_file
 
 
 def collect_results(program_name, out_dir, results_dir):
     """Copy the four files worth keeping into run_results/, next to this script.
 
     The trace is what the viewer renders, the .list is the disassembly, the
-    _clean.txt is the measured region plus the metrics table, and the stats
+    _report.txt is the measured region plus the metrics table, and the stats
     are gem5's own numbers behind that table."""
     try:
         os.makedirs(results_dir, exist_ok=True)
@@ -396,7 +396,7 @@ def collect_results(program_name, out_dir, results_dir):
     copied = []
     for name, kept_as in ((f"{program_name}_trace.txt", None),
                           (f"{program_name}.list", None),
-                          (f"{program_name}_clean.txt", None),
+                          (f"{program_name}_report.txt", None),
                           ("stats.txt", f"{program_name}_stats.txt")):
         source = os.path.join(out_dir, name)
         # With --no-trace there is no trace to copy, so a missing source here
@@ -466,7 +466,7 @@ def parse_stats(stats_path):
     return results
 
 
-def print_table(results, overhead, clean_file=None, header=("RESULTS TABLE",)):
+def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
     output_buffer = []
 
     # The rule is widened when the title is longer, so the box never breaks.
@@ -533,13 +533,13 @@ def print_table(results, overhead, clean_file=None, header=("RESULTS TABLE",)):
     for line in output_buffer:
         print(line)
 
-    if clean_file and os.path.exists(clean_file):
+    if report_file and os.path.exists(report_file):
         try:
-            with open(clean_file, "a") as f_clean:
+            with open(report_file, "a") as f_report:
                 # output_buffer opens with its own blank line.
                 for line in output_buffer:
-                    f_clean.write(line + "\n")
-            print(f"[INFO] Metrics successfully consolidated in: {clean_file}")
+                    f_report.write(line + "\n")
+            print(f"[INFO] Metrics successfully consolidated in: {report_file}")
         except Exception as e:
             print(f"[WARN] Could not save the metrics to the file: {e}")
 
@@ -602,7 +602,7 @@ if __name__ == "__main__":
     stats_file = run_gem5(config_file, binary, args.no_trace, program_name,
                           args.gem5_out_dir, config_args)
 
-    clean_file = generate_and_show_codelist(binary, program_name,
+    report_file = generate_and_show_codelist(binary, program_name,
                                             args.gem5_out_dir)
 
     metrics = parse_stats(stats_file)
@@ -612,7 +612,7 @@ if __name__ == "__main__":
     config_label = " ".join([os.path.basename(config_file)] + list(config_args))
     header = build_table_header("gem5", config_label,
                                 os.path.basename(src_file), geometry)
-    print_table(metrics, overhead, clean_file, header)
+    print_table(metrics, overhead, report_file, header)
 
-    # Done last, so the _clean.txt copied out already carries the table.
+    # Done last, so the _report.txt copied out already carries the table.
     collect_results(program_name, args.gem5_out_dir, args.results_dir)

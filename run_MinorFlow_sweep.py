@@ -10,7 +10,7 @@ sets TEST to it and runs only the workloads that entry was made for:
 An entry whose workload is 'all' runs every workload named anywhere in the
 table, which is the set the sweep has been exercised with.
 
-Outputs are collected as <test>_trace.config<N>.txt, <test>_clean.config<N>.txt,
+Outputs are collected as <test>_trace.config<N>.txt, <test>_report.config<N>.txt,
 <test>_stats.config<N>.txt and <test>.config<N>.list, so one configuration's
 results never overwrite another's. Every metrics table is also gathered into
 a single metrics.txt.
@@ -371,17 +371,17 @@ def prune_empty(path):
         pass
 
 
-def extract_metrics(clean_path):
-    """The metrics section of a _clean.txt, or None if it holds none.
+def extract_metrics(report_path):
+    """The metrics section of a _report.txt, or None if it holds none.
 
-    A _clean.txt is the measured region of the disassembly followed by the
+    A _report.txt is the measured region of the disassembly followed by the
     metrics table, so everything from the rule above the table's title to the
     end of the file is the section wanted here."""
     try:
-        with open(clean_path) as f:
+        with open(report_path) as f:
             lines = f.read().splitlines()
     except OSError as e:
-        print(f"[WARN] Could not read {clean_path}: {e}")
+        print(f"[WARN] Could not read {report_path}: {e}")
         return None
 
     for i, line in enumerate(lines):
@@ -396,12 +396,12 @@ def extract_metrics(clean_path):
 def write_metrics_file(out_dir, entries, info):
     """Gather every run's metrics table into one metrics.txt.
 
-    entries is [(label, clean file)] in plan order, so the file reads in the
+    entries is [(label, report file)] in plan order, so the file reads in the
     same order as the summary above it. A run whose table is missing is named
     rather than skipped silently."""
     blocks, missing = [], []
-    for label, clean_path in entries:
-        block = extract_metrics(clean_path)
+    for label, report_path in entries:
+        block = extract_metrics(report_path)
         if block is None:
             missing.append(label)
             continue
@@ -705,7 +705,7 @@ def main():
     write_metrics_file(
         out_dir,
         [(f"{LABEL}{cid} / {name}",
-          os.path.join(out_dir, f"{name}_clean.{LABEL}{cid}.txt"))
+          os.path.join(out_dir, f"{name}_report.{LABEL}{cid}.txt"))
          for cid, name, code, _ in ordered if code == 0],
         [f"Config   : {base_name}",
          f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
