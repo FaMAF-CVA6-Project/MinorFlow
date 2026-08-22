@@ -1,29 +1,7 @@
 # Files to big to be tracked
+
 # CARLA
 docs/CARLA2026/daxpy_validation/daxpy_trace.txt
+
 # Testing
 tests/*_trace*
-tests/branch_stress.config1.json
-tests/branch_stress_clean.config1.txt
-tests/branch_stress.config11.json
-tests/branch_stress_clean.config11.txt
-tests/branch_stress.config16.json
-tests/branch_stress_clean.config16.txt
-tests/icache_pressure.config1.json
-tests/icache_pressure_clean.config1.txt
-tests/icache_pressure.config4.json
-tests/icache_pressure_clean.config4.txt
-tests/icache_pressure.config5.json
-tests/icache_pressure_clean.config5.txt
-tests/icache_pressure.config15.json
-tests/icache_pressure_clean.config15.txt
-tests/matmul_small.config1.json
-tests/matmul_small_clean.config1.txt
-tests/matmul_small.config9.json
-tests/matmul_small_clean.config9.txt
-tests/matmul_small.config10.json
-tests/matmul_small_clean.config10.txt
-tests/stream_store.config1.json
-tests/stream_store_clean.config1.txt
-tests/stream_store.config13.json
-tests/stream_store_clean.config13.txt
