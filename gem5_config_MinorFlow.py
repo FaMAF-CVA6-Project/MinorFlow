@@ -29,33 +29,9 @@ from m5.objects import (  # type: ignore
     SimpleBTB,
 )
 
-# Reference Core sweep harness for MinorFlow. TEST 1 is the baseline. Every
-# other entry perturbs one part of the pipeline so its effect is visible in the
-# viewer.
-#
-# TEST table fields:
-#   (name, cpu_overrides, l1i_size, l1d_size, dcache_overrides,
-#    icache_overrides, clk_freq)
-#
-#   1   baseline                                        workload: all
-#   2   fetch2ToDecodeForwardDelay 1 -> 2               workload: daxpy
-#   3   decodeToExecuteForwardDelay 1 -> 2              workload: daxpy
-#   4   fetch1LineWidth and snap 4 -> 16                workload: icache_hit_loop
-#   5   fetch1FetchLimit 1 -> 4, L1I 16KiB -> 2KiB      workload: icache_hit_loop
-#   6   fetch2InputBufferSize 3 -> 6                    workload: int_loop
-#   7   decodeInputBufferSize 4 -> 8                    workload: int_loop
-#   8   executeInputBufferSize 8 -> 3                   workload: int_loop
-#   9   dual issue, 2-wide                              workload: matrix_mul
-#  10   executeCommitLimit 2 -> 1 on the 2-wide pipe,
-#       so commit becomes the binding limit (against 9) workload: matrix_mul
-#  11   branchPred LocalBP -> TournamentBP              workload: branch_stress
-#  12   L1D access latency 1 -> 3                       workload: dcache_hit_loop
-#  13   executeLSQStoreBufferSize 16 -> 2               workload: stream_store
-#  14   baseline at 47 MHz, clock only                  workload: int_loop
-#  15   L1I access latency 1 -> 3                       workload: icache_hit_loop
-#  16   executeBranchDelay 1 -> 10                      workload: branch_stress
-#  17   combination: 2-wide, L1I and L1D latency 3,
-#       forward delays 2, branch delay 5, 60 MHz        workload: daxpy
+# Reference Core sweep harness. TEST 1 is the baseline, every other entry
+# perturbs one part of the pipeline. The README lists all seventeen. Fields:
+# (name, cpu_overrides, l1i/l1d_size, dcache/icache_overrides, clk_freq).
 
 TEST = 1
 

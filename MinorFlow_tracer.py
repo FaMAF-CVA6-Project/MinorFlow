@@ -9,6 +9,7 @@ Usage:
     python3 minorflow_tracer.py trace.txt --stats    # also print a summary
 """
 import time
+import math
 import os
 import sys
 import re
@@ -42,7 +43,7 @@ RE_SBDEL = re.compile(
     r'storeBuffer: Deleting request:.*?(\d+/\S+/\d+/(\d+)\.\d+)')
 RE_F2DEC = re.compile(r'fetch2: decoder inst (\S+) pc:')
 RE_MINORINST = re.compile(
-    r'execute: MinorInst: id=\d+/\S+/(\d+)/(\d+)\.\d+\s+addr=(0x[0-9a-f]+)\s+'
+    r'execute: MinorInst: id=\d+/\S+/(\d+)/(\d+)\.(\d+)\s+addr=(0x[0-9a-f]+)\s+'
     r'inst="([^"]+)"\s+class=(\w+)\s+flags="([^"]*)"\s+srcRegs=([^ ]*)\s+destRegs=([^ ]*)')
 RE_SCOREBOARD = re.compile(
     r'scoreboard\d+: Marking up inst:\s+(\S+).*returnCycle:\s*(\d+)')
@@ -56,7 +57,13 @@ RE_BRANCH = re.compile(
     r'Changing stream on branch: (\w+) target: (\S+) (\S+) pc:')
 RE_DISCARD = re.compile(r'execute: Discarding inst: (\S+) pc:')
 RE_COMMIT = re.compile(
-    r'T0\s+:\s+(0x[0-9a-f]+)\s+@\S+\s+:\s+(.+?)\s+:\s+(\w+)(?:.*?FetchSeq=(\d+))?')
+    r'T0\s+:\s+(0x[0-9a-f]+)([^:]*?):\s+(.+?)\s+:\s+(\w+)'
+    r'(?:.*?FetchSeq=(\d+))?')
+RE_COMMIT_UPC = re.compile(r'\.\s*(\d+)\s*$')
+RE_COMMITSTALL = re.compile(
+    r'Not committing inst:\s+\d+/\S+/(\d+)/(\d+)\.(\d+).*?'
+    r'stalled for (\d+) more cycles')
+RE_DCCOALESCE = re.compile(r'l1dcaches: \w+ coalescing MSHR for ')
 
 RE_COMPRESSED = re.compile(r'^c[_.]')
 
@@ -137,33 +144,8 @@ def detect_tpc_streaming(path, progress=None):
     return tpc
 
 
-def detect_tpc(lines):
-    """Non-streaming variant of detect_tpc_streaming, for in-memory input."""
-    tick_set = set()
-    for line in lines:
-        m = RE_TICK.match(line)
-        if m:
-            tick_set.add(int(m.group(1)))
-    ticks = sorted(tick_set)
-    tpc = 10000
-    if len(ticks) > 1:
-        delta_count = {}
-        for i in range(1, len(ticks)):
-            d = ticks[i] - ticks[i - 1]
-            if d > 0:
-                delta_count[d] = delta_count.get(d, 0) + 1
-        best_delta, best_count = 0, 0
-        for d, c in delta_count.items():
-            if c > best_count:
-                best_count, best_delta = c, d
-        if best_delta > 0:
-            tpc = best_delta
-    return tpc
-
-
 def round_half_up(x):
     """Match JS Math.round (round half UP, not banker's rounding)."""
-    import math
     return math.floor(x + 0.5)
 
 
@@ -194,10 +176,8 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
 
 def parse(line_source, tpc, progress=None, total_bytes=0):
     """Pass 2: build per-instruction records from an iterable of trace lines.
-
-    line_source may be an open file handle or a list of strings. tpc must
-    already be detected via detect_tpc_streaming / detect_tpc.
-    """
+    line_source may be a file handle or a list of strings, and tpc must already
+    be detected via detect_tpc_streaming."""
     # ---- Pass 2: event-by-event extraction ---------------------------------
     fetch1_map = {}     # lineSeq -> cycle of MinorLine response
     fetch1_req = {}     # lineSeq -> cycle of "Issued fetch request"
@@ -216,8 +196,12 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     storebuf_events = {}  # fetchSeq -> {pushCycle, deleteCycle}
     ic_miss_cycles = set()
     ic_hit_cycles = set()
-    dcache_by_cycle = {}  # cycle -> {miss, isWrite}
-    commit_list = []    # {cycle, pc, instr, fu, fetchSeq}
+    dcache_by_cycle = {}  # cycle -> {miss, isWrite, coalesced}
+    commit_list = []    # {cycle, pc, instr, fu, fetchSeq, upc}
+    # fetchSeq -> latest minimumCommitCycle seen. Keyed by fetchSeq, not
+    # execSeq, so a stall on either micro-op of a split macro-op lands on the
+    # single record that macro-op produces.
+    exmin_map = {}
     observed_line_size = [None]   # boxed so inner assignment is visible
     branch_pred_info = {}
 
@@ -274,7 +258,25 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             dcache_by_cycle.setdefault(cycle, []).append({
                 'miss': m.group(2) == 'miss',
                 'isWrite': m.group(1).startswith('Write'),
+                'coalesced': False,
             })
+            continue
+
+        if RE_DCCOALESCE.search(l):
+            # Attach to the most recent unmarked miss of this cycle: the
+            # coalescing line follows its own access line in the same tick.
+            for e in reversed(dcache_by_cycle.get(cycle, [])):
+                if e['miss'] and not e['coalesced']:
+                    e['coalesced'] = True
+                    break
+            continue
+
+        m = RE_COMMITSTALL.search(l)
+        if m:
+            fseq = int(m.group(2))
+            end = cycle + int(m.group(4))
+            if end > exmin_map.get(fseq, 0):
+                exmin_map[fseq] = end
             continue
 
         m = RE_LSQ.search(l)
@@ -326,8 +328,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             fseq = int(m.group(2))
             execute_map[fseq] = {
                 'cycle': cycle, 'lineSeq': line_seq,
-                'pc': m.group(3), 'instr': m.group(4), 'fu': m.group(5),
-                'flags': m.group(6), 'src': m.group(7), 'dest': m.group(8),
+                'execSeq': int(m.group(3)),
+                'pc': m.group(4), 'instr': m.group(5), 'fu': m.group(6),
+                'flags': m.group(7), 'src': m.group(8), 'dest': m.group(9),
                 'predictedTaken': 'predictedTaken' in l,
             }
             continue
@@ -409,10 +412,12 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         if 'T0' in l:
             m = RE_COMMIT.search(l)
             if m:
+                upc = RE_COMMIT_UPC.search(m.group(2))
                 commit_list.append({
                     'cycle': cycle, 'pc': m.group(1),
-                    'instr': m.group(2).strip(), 'fu': m.group(3),
-                    'fetchSeq': int(m.group(4)) if m.group(4) is not None else None,
+                    'instr': m.group(3).strip(), 'fu': m.group(4),
+                    'fetchSeq': int(m.group(5)) if m.group(5) is not None else None,
+                    'upc': int(upc.group(1)) if upc else None,
                 })
 
     if progress is not None:
@@ -427,6 +432,27 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         execute_map, fetch1_map, fetch2_map, decode_map, issue_first)
 
     # ---- Commit lookup tables ----------------------------------------------
+    # gem5 splits a RISC-V atomic into a load and a store committing on
+    # different cycles, but decode gives both the same fetchSeqNum.
+    merged = []
+    for cm in commit_list:
+        prev = merged[-1] if merged else None
+        if (prev is not None
+                and prev['pc'] == cm['pc']
+                and cm['upc'] is not None and prev['_upcLast'] is not None
+                and cm['upc'] == prev['_upcLast'] + 1
+                and cm['fetchSeq'] is not None and prev['_seqLast'] is not None
+                and cm['fetchSeq'] == prev['_seqLast'] + 1):
+            prev['cycle'] = cm['cycle']
+            prev['_upcLast'] = cm['upc']
+            prev['_seqLast'] = cm['fetchSeq']
+        else:
+            e = dict(cm)
+            e['_upcLast'] = cm['upc']
+            e['_seqLast'] = cm['fetchSeq']
+            merged.append(e)
+    commit_list = merged
+
     commit_by_fetchseq = {}
     for cm in commit_list:
         if cm['fetchSeq'] is not None:
@@ -461,9 +487,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         f2_f = f2_final if f2_final is not None else (dec_f - pipe_f2dec)
         f1_f = f1c if f1c is not None else (f2_f - pipe_f1f2)
         dto_f = dec_f + pipe_dec_ex
-
-        # Commit cycle: prefer exact FetchSeq, else per-PC pairing.
-        cm_entry = commit_by_fetchseq.get(seq)
+        cm_entry = commit_by_fetchseq.get(ex.get('execSeq'))
         is_discarded = seq in discard_map
         if cm_entry is not None:
             cmc = cm_entry['cycle']
@@ -492,6 +516,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         else:
             fu_done = ret_cyc if ret_cyc is not None else (
                 cmc if cmc is not None else ex_fu + 1)
+
+        exmin = exmin_map.get(seq)
+        if exmin is not None:
+            fu_done = max(fu_done, exmin if cmc is None else min(exmin, cmc))
 
         # ---- Line-wrap detection (32-bit inst straddling a cache line) ------
         wraps_line = False
@@ -563,7 +591,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 branch_kind = None
 
         is_cond_correct_nt = (
-            not is_discarded) and is_ctrl and is_cond and br_type is None
+            not is_discarded) and is_ctrl and br_type is None
 
         if is_discarded or not is_ctrl:
             branch_outcome = None
@@ -660,10 +688,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     ic_access_cycles = sorted(ic_hit_cycles | ic_miss_cycles)
     ic_miss_arr = sorted(ic_miss_cycles)
 
-    # Counted from the access log rather than per-instruction: per-instruction
-    # attribution misses store writebacks, which retire after commit. Cycles
-    # are emitted with multiplicity, since a dirty-victim writeback can share
-    # a cycle with a demand access.
+    # Counted from the access log, since per-instruction attribution misses
+    # store writebacks that retire after commit. Cycles carry multiplicity, a
+    # dirty-victim writeback can share a cycle with a demand access.
     dc_access_cycles = sorted(
         c for c, evs in dcache_by_cycle.items() for _ in evs)
     dc_miss_cycles = sorted(c for c, evs in dcache_by_cycle.items()
@@ -672,6 +699,12 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         c for c, evs in dcache_by_cycle.items() for e in evs if e['isWrite'])
     dc_store_miss_cycles = sorted(c for c, evs in dcache_by_cycle.items(
     ) for e in evs if e['miss'] and e['isWrite'])
+    dc_mshr_miss_cycles = sorted(
+        c for c, evs in dcache_by_cycle.items()
+        for e in evs if e['miss'] and not e['coalesced'])
+    dc_store_mshr_miss_cycles = sorted(
+        c for c, evs in dcache_by_cycle.items()
+        for e in evs if e['miss'] and not e['coalesced'] and e['isWrite'])
 
     return {
         'metadata': {
@@ -693,6 +726,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'miss_cycles': dc_miss_cycles,
             'store_access_cycles': dc_store_access_cycles,
             'store_miss_cycles': dc_store_miss_cycles,
+            'mshr_miss_cycles': dc_mshr_miss_cycles,
+            'store_mshr_miss_cycles': dc_store_mshr_miss_cycles,
         },
         'instructions': records,
     }

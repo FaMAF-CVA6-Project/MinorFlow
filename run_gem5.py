@@ -56,7 +56,7 @@ CODE_BANNER = [RULE, "DISASSEMBLED CODE", RULE]
 CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
 
 # Lines of each captured stream echoed when a step fails. The whole of both
-# goes to the log either way; this is only what the terminal is worth.
+# goes to the log either way. This is only what the terminal is worth.
 ERROR_TAIL_LINES = 40
 
 # ==============================================================================
@@ -72,7 +72,6 @@ OVERHEAD_PROFILES = {
         "dcache_access":    0,
         "branch_pred":      4,
         "branch_miss":      2,
-        "simSeconds":       0.0,   # in seconds
     },
     "asm": {
         "numCycles":        17,
@@ -83,7 +82,6 @@ OVERHEAD_PROFILES = {
         "dcache_access":    0,
         "branch_pred":      3,
         "branch_miss":      1,
-        "simSeconds":       0.0,   # in seconds
     },
 }
 
@@ -113,6 +111,8 @@ METRICS_MAP = {
     "bp_misp_return":    r"branchPred\.mispredicted::Return\b",
     "bp_cond_incorrect": r"branchPred\.condIncorrect\b",
     "simSeconds":        r"simSeconds",
+    "simTicks":          r"simTicks",
+    "simFreq":           r"simFreq",
     "ipc":               r"cores\.core\.ipc",
 }
 
@@ -144,12 +144,23 @@ def format_cache_size(value):
     return f"{num}B"
 
 
-def read_cache_geometry(out_dir):
-    """Read the L1 geometry gem5 actually instantiated.
+def format_metric(value, decimals=4):
+    """Render a table value: thousands grouped, decimals only when it has any,
+    so a count reads as 1,234,567 and an IPC as 0.8523 down the same column. A
+    real number landing on a whole one drops the trailing zeros."""
+    try:
+        number = round(float(value), decimals)
+    except (TypeError, ValueError):
+        return str(value)
+    if number.is_integer():
+        return f"{int(number):,}"
+    return f"{number:,.{decimals}f}"
 
-    gem5 dumps config.ini next to stats.txt on every run, so this reports the
-    caches the simulation was built with rather than the defaults written in
-    the configuration file."""
+
+def read_cache_geometry(out_dir):
+    """Read the L1 geometry gem5 actually instantiated. config.ini is dumped
+    next to stats.txt on every run, so this reports the caches the simulation
+    was built with rather than the defaults in the configuration file."""
     geometry = {}
     section = ""
     config_path = os.path.join(out_dir, "config.ini")
@@ -180,11 +191,9 @@ def read_cache_geometry(out_dir):
 
 
 def build_table_header(engine, config, program, geometry):
-    """The table title, over two lines.
-
-    What was measured goes on the first, and the configuration the core was
-    modelled from on the second, since the configuration and its flags are
-    long enough to push the title well past the width of the table."""
+    """The table title, over two lines. What was measured goes on the first
+    and the configuration on the second, the configuration and its flags being
+    long enough to push a single title past the width of the table."""
     parts = [f"RESULTS TABLE {engine} {program}"]
     for name, label in (("icache", "ICache"), ("dcache", "DCache")):
         cache = geometry.get(name, {})
@@ -213,12 +222,9 @@ def detect_lang(src_file, override):
 
 
 def report_failure(what, cmd, result, out_dir, program_name):
-    """Say why a step failed, and leave the whole of it on disk.
-
-    A failure is the one case where the output matters most, so both streams
-    go to a log inside out_dir and the end of each is printed. gem5 puts its
-    Python traceback on stderr but its own warnings, and often the line that
-    explains the traceback, on stdout, so neither alone is the failure."""
+    """Say why a step failed and leave the whole of it on disk. Both streams
+    go to a log in out_dir and the end of each is printed, since gem5 puts its
+    traceback on stderr but the line explaining it on stdout."""
     log_path = os.path.join(out_dir, f"{program_name}_error.log")
     try:
         os.makedirs(out_dir, exist_ok=True)
@@ -252,12 +258,9 @@ def report_failure(what, cmd, result, out_dir, program_name):
 
 
 def compile_program(src_file, lang, out_dir):
-    """Compile src_file according to its type (C or asm). Return the binary
-    path.
-
-    The binary is built inside out_dir rather than beside the source, so that
-    the whole run stays in one place and two runs of the same test cannot
-    write the same file."""
+    """Compile src_file by its type, C or asm, and return the binary path. It
+    is built inside out_dir rather than beside the source, so a run stays in
+    one place and two runs of a test cannot write the same file."""
     base_name = os.path.splitext(os.path.basename(src_file))[0]
     os.makedirs(out_dir, exist_ok=True)
     bin_file = os.path.join(out_dir, base_name)
@@ -286,12 +289,9 @@ def compile_program(src_file, lang, out_dir):
 
 
 def split_own_args(argv):
-    """Split the command line into this script's arguments and the ones meant
-    for the configuration.
-
-    Everything after a '--' is the configuration's, verbatim. That is the
-    unambiguous form, and the one to use for a flag that takes a value or that
-    shares a name with one of ours."""
+    """Split the command line into this script's arguments and the
+    configuration's. Everything after a '--' is the configuration's, verbatim,
+    which is what a flag taking a value or colliding with ours needs."""
     if "--" in argv:
         cut = argv.index("--")
         return argv[:cut], argv[cut + 1:]
@@ -382,11 +382,9 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
 
 
 def collect_results(program_name, out_dir, results_dir):
-    """Copy the four files worth keeping into run_results/, next to this script.
-
-    The trace is what the viewer renders, the .list is the disassembly, the
-    _report.txt is the measured region plus the metrics table, and the stats
-    are gem5's own numbers behind that table."""
+    """Copy the four files worth keeping into run_results/. The trace is what
+    the viewer renders, the .list the disassembly, the _report.txt the measured
+    region plus the metrics table, and the stats gem5's own numbers."""
     try:
         os.makedirs(results_dir, exist_ok=True)
     except OSError as e:
@@ -495,6 +493,21 @@ def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
 
     corrected_ipc = net_insts / net_cycles if net_cycles > 0 else 0
 
+    # stats.txt rounds simSeconds to six decimals, which at these runtimes
+    # cuts the time off at the whole microsecond. simTicks keeps the full
+    # resolution, so the time comes from there when the tick rate is beside it.
+    time_us = results.get("simSeconds", 0) * 1_000_000
+    ticks = results.get("simTicks", 0)
+    tick_freq = results.get("simFreq", 0)
+    if ticks and tick_freq:
+        time_us = ticks / tick_freq * 1_000_000
+
+    # The time is the cycle count read through the clock, so the net time is
+    # the net cycles read through the same clock. Scaling by the ratio takes
+    # the clock from the run itself and needs no frequency here.
+    net_cycle_count = max(0, raw_cycles - overhead.get("numCycles", 0))
+    net_time_us = time_us * net_cycle_count / raw_cycles if raw_cycles else 0.0
+
     for key in keys_order:
         val_official = results.get(key, 0)
         label = PRETTY_NAMES.get(key, key)
@@ -506,22 +519,22 @@ def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
             val_corrected = max(0, val_official - ovh)
 
         if key == "simSeconds":
-            val_off_us = val_official * 1_000_000
-            val_cor_us = val_corrected * 1_000_000
-            clean_array_official.append(round(val_off_us))
-            clean_array_corrected.append(round(val_cor_us))
-            fmt_off = f"{int(val_off_us)}"
-            fmt_cor = f"{int(val_cor_us)}"
+            val_off_us = time_us
+            val_cor_us = net_time_us
+            clean_array_official.append(round(val_off_us, 4))
+            clean_array_corrected.append(round(val_cor_us, 4))
+            fmt_off = format_metric(val_off_us)
+            fmt_cor = format_metric(val_cor_us)
         elif key == "ipc":
             clean_array_official.append(round(val_official, 4))
             clean_array_corrected.append(round(val_corrected, 4))
-            fmt_off = f"{val_official:.4f}"
-            fmt_cor = f"{val_corrected:.4f}"
+            fmt_off = format_metric(val_official)
+            fmt_cor = format_metric(val_corrected)
         else:
             clean_array_official.append(int(val_official))
             clean_array_corrected.append(int(val_corrected))
-            fmt_off = f"{int(val_official)}"
-            fmt_cor = f"{int(val_corrected)}"
+            fmt_off = format_metric(int(val_official))
+            fmt_cor = format_metric(int(val_corrected))
 
         output_buffer.append(f"{label:<25} | {fmt_off:>15} | {fmt_cor:>15}")
 

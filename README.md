@@ -96,15 +96,27 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 
 ## Running the sweep: `run_MinorFlow_sweep.py`
 
-[gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) is not one machine but seventeen. `TEST 1` is the Reference Core. Every other entry perturbs one part of the pipeline so its effect is visible in the viewer, and the comment table names the workload that shows it:
+[gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) is not one machine but seventeen. Set `TEST` to the one you want. `TEST 1` is the Reference Core, and every other entry perturbs one part of the pipeline so its effect is visible in the viewer, against the workload that shows it:
 
-```
-#   1   baseline                                        workload: all
-#   4   fetch1LineWidth and snap 4 -> 16                workload: icache_pressure
-#  11   branchPred LocalBP -> TournamentBP              workload: branch_stress
-
-TEST = 1
-```
+| # | What it changes | Workload |
+| --- | --- | --- |
+| 1 | baseline | all |
+| 2 | `fetch2ToDecodeForwardDelay` 1 to 2 | daxpy |
+| 3 | `decodeToExecuteForwardDelay` 1 to 2 | daxpy |
+| 4 | `fetch1LineWidth` and snap 4 to 16 | icache_hit_loop |
+| 5 | `fetch1FetchLimit` 1 to 4, L1I 16KiB to 2KiB | icache_hit_loop |
+| 6 | `fetch2InputBufferSize` 3 to 6 | int_loop |
+| 7 | `decodeInputBufferSize` 4 to 8 | int_loop |
+| 8 | `executeInputBufferSize` 8 to 3 | int_loop |
+| 9 | dual issue, 2-wide | matrix_mul |
+| 10 | `executeCommitLimit` 2 to 1 on the 2-wide pipe, so commit becomes the binding limit against 9 | matrix_mul |
+| 11 | `branchPred` LocalBP to TournamentBP | branch_stress |
+| 12 | L1D access latency 1 to 3 | dcache_hit_loop |
+| 13 | `executeLSQStoreBufferSize` 16 to 2 | stream_store |
+| 14 | baseline at 47 MHz, clock only | int_loop |
+| 15 | L1I access latency 1 to 3 | icache_hit_loop |
+| 16 | `executeBranchDelay` 1 to 10 | branch_stress |
+| 17 | combination: 2-wide, L1I and L1D latency 3, forward delays 2, branch delay 5, 60 MHz | daxpy |
 
 `run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `run_gem5.py`:
 
@@ -210,6 +222,16 @@ python3 clean_repo.py [-y] [--dry-run] [-v]
 ```
 
 It lists what it found with its size and asks before deleting. The viewer JSONs are left alone and `docs/` is kept whole, since the CARLA 2026 daxpy validation under it is the evidence behind the paper.
+
+### Oversized JSONs
+
+A tracer JSON is never deleted, since it is what the viewer reads, but a long run makes one too big to commit: GitHub warns above 50 MiB and refuses above 100 MiB, and git matches a path and never a size. `ignore_big_json.py` measures the JSONs and the `.js` wrappers in this repository and writes the oversized ones into a block of `.gitignore` that it owns.
+
+```bash
+python3 ignore_big_json.py [-y] [--dry-run] [-v] [-l MIB] [--prune]
+```
+
+It only ever adds, so a second run changes nothing. `--prune` drops the entries whose file has gone or shrunk, and `-l` sets a different threshold in MiB. A file git already tracks is reported rather than ignored.
 
 ## Licence
 

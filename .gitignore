@@ -1,4 +1,7 @@
-# Files to big to be tracked
+# Python
+__pycache__
+
+# Files too big to be tracked
 
 # CARLA
 docs/CARLA2026/daxpy_validation/daxpy_trace.txt

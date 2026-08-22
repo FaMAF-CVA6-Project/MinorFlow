@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""Remove everything the gem5 run scripts generate.
+"""Remove everything the gem5 run scripts generate: m5out/, batch_results/,
+the sweep result folders and each runner's run_results/. Only the fixed names
+below are removed, and only where a gem5 runner sits beside them.
 
-Covers the folders the runners write into the directory they are launched from
-(m5out/, batch_results/, the two sweep result folders) and the run_results/
-each runner leaves next to itself.
-
-Only the fixed names listed below are ever removed, so a tests/ folder or
-anything else tracked in git cannot be caught by mistake. The folders shared
-by name with the Verilator flow are taken only when a gem5 runner sits beside
-them, so this never sweeps up a Verilator run's results.
-
-Launch it from the gem5 root, the same place run_gem5.py is launched from, so
-that the folders gem5 wrote there are found:
+Launch it from the gem5 root, where run_gem5.py is launched from:
 
   python3 clean_gem5.py             # list, then ask
   python3 clean_gem5.py -y          # delete without asking
@@ -49,10 +41,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
 
 
 def search_roots():
-    """The working directory (the gem5 root) plus this repository.
-
-    A run leaves folders in both: gem5 writes m5out/ where it was launched,
-    while run_results/ lands next to the runner script."""
+    """The working directory, the gem5 root, plus this repository. A run
+    leaves folders in both: gem5 writes m5out/ where it was launched, and
+    run_results/ lands next to the runner script."""
     roots = []
     seen = set()
     for root in (os.getcwd(), REPO_ROOT):
@@ -69,10 +60,9 @@ def search_roots():
 
 
 def find_targets(roots, extra):
-    """Collect every generated folder under the roots, plus any named by hand.
-
-    A match is never descended into: it is about to be deleted whole, so its
-    contents cannot add anything."""
+    """Collect every generated folder under the roots, plus any named by
+    hand. A match is never descended into, it is about to be deleted whole so
+    its contents cannot add anything."""
     found = []
     seen = set()
 

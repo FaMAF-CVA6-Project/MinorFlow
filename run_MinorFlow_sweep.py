@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
-"""
-Run the MinorFlow configuration sweep.
-
-Reads the TEST table out of gem5_config_MinorFlow.py and, for each entry,
-sets TEST to it and runs only the workloads that entry was made for:
-
-    #   4   fetch1LineWidth and snap 4 -> 16    workload: icache_pressure
-
-An entry whose workload is 'all' runs every workload named anywhere in the
-table, which is the set the sweep has been exercised with.
-
-Outputs are collected as <test>_trace.config<N>.txt, <test>_report.config<N>.txt,
-<test>_stats.config<N>.txt and <test>.config<N>.list, so one configuration's
-results never overwrite another's. Every metrics table is also gathered into
-a single metrics.txt.
-
-Run this from the gem5 root, like run_gem5.py. The configuration file is
-restored when the sweep ends, fails or is interrupted.
+"""Run the MinorFlow configuration sweep. Each TEST entry runs against the
+workloads it names, outputs carry a .config<N> tag, and every metrics table is
+gathered into one metrics.txt. Run it from the gem5 root.
 """
 import argparse
 import concurrent.futures
@@ -94,12 +79,9 @@ def find_beside_script(name, what, extra=()):
 
 
 def split_own_args(argv):
-    """Split the command line into this script's arguments and the ones meant
-    for the configuration.
-
-    Everything after a '--' is the configuration's, verbatim. That is the
-    unambiguous form, and the one to use for a flag that takes a value or that
-    shares a name with one of ours."""
+    """Split the command line into this script's arguments and the
+    configuration's. Everything after a '--' is the configuration's, verbatim,
+    which is what a flag taking a value or colliding with ours needs."""
     if "--" in argv:
         cut = argv.index("--")
         return argv[:cut], argv[cut + 1:]
@@ -107,10 +89,9 @@ def split_own_args(argv):
 
 
 def parse_table(text):
-    """Parse the TEST table into {id: (description, workloads)}.
-
-    Ids and names come from the TESTS dict, workloads from the comment table
-    above it, whose rows may wrap onto continuation lines."""
+    """Parse the TEST table into {id: (description, workloads)}. Ids and names
+    come from the TESTS dict, workloads from the comment table above it, whose
+    rows may wrap onto continuation lines."""
     entries = {int(n): name for n, name in ENTRY_RE.findall(text)}
     if not entries:
         return {}
@@ -168,10 +149,8 @@ def suggest(name, tests_dir):
 
 
 def resolve_test_file(name, tests_dir):
-    """Turn a workload into a path.
-
-    The table writes a workload as a bare name, but a name carrying its
-    extension and a path to a file are what a person naturally types on
+    """Turn a workload into a path. The table writes a bare name, but a name
+    with its extension and a path to a file are what a person types on
     --tests, so all three resolve rather than only the first."""
     # A path, absolute or relative to the working directory, taken as given.
     if os.path.isfile(name):
@@ -281,20 +260,17 @@ def driver_results_dir(runner):
 
 
 def job_dirs(runner, label):
-    """The private folders one run works in.
-
-    Each job gets its own, so concurrent runs cannot overwrite each other's
-    stats.txt, trace or binary."""
+    """The private folders one run works in. Each job gets its own, so
+    concurrent runs cannot overwrite each other's stats.txt, trace or
+    binary."""
     return (os.path.join(GEM5_OUT_DIR, label),
             os.path.join(driver_results_dir(runner), label))
 
 
 def write_config_copy(text, config_id, dest_dir, base_name):
     """Write a copy of the configuration with the selector set to config_id.
-
-    The sweep runs copies rather than editing the file in place, so the
-    configuration you point it at is never modified, an interrupted sweep
-    leaves nothing to restore, and the runs can go in parallel."""
+    The sweep runs copies rather than editing in place, so the file is never
+    modified, nothing needs restoring, and runs can go in parallel."""
     new_text, count = SELECTOR_RE.subn(
         lambda m: f"{m.group(1)}{config_id}{m.group(3)}", text, count=1)
     if count != 1:
@@ -333,11 +309,9 @@ def collect(job_results, config_id, out_dir, want_trace):
 
 
 def keep_failed_config(config_copy, job_gem5_out):
-    """Save the configuration a failed run used, beside that run's output.
-
-    The copies live in a temporary folder that is deleted when the sweep ends,
-    so without this the traceback from a failed run names a path that no
-    longer exists by the time anyone reads it."""
+    """Save the configuration a failed run used, beside that run's output. The
+    copies live in a temporary folder deleted when the sweep ends, so the
+    traceback would otherwise name a path that no longer exists."""
     try:
         os.makedirs(job_gem5_out, exist_ok=True)
         dest = os.path.join(job_gem5_out, os.path.basename(config_copy))
@@ -349,21 +323,17 @@ def keep_failed_config(config_copy, job_gem5_out):
 
 
 def discard_run(job_gem5_out, job_results):
-    """Delete a run's working folders, once it has been collected.
-
-    A debug trace runs to hundreds of megabytes and one is produced per run,
-    so keeping them would cost far more disk than the results are worth. Only
-    this run's folders go, so a failed run's output survives the sweep."""
+    """Delete a run's working folders once it has been collected. A debug
+    trace runs to hundreds of megabytes per run. Only this run's folders go, so
+    a failed run's output survives the sweep."""
     for path in (job_gem5_out, job_results):
         shutil.rmtree(path, ignore_errors=True)
 
 
 def prune_empty(path):
     """Remove a folder the sweep has emptied, leaving anything else alone.
-
-    Deliberately not a recursive delete: a plain run_gem5.py run writes
-    straight into these folders, and that output is not the sweep's to
-    destroy."""
+    Deliberately not a recursive delete, a plain run_gem5.py run writes
+    straight into these folders and that output is not the sweep's."""
     try:
         if os.path.isdir(path) and not os.listdir(path):
             os.rmdir(path)
@@ -372,11 +342,9 @@ def prune_empty(path):
 
 
 def extract_metrics(report_path):
-    """The metrics section of a _report.txt, or None if it holds none.
-
-    A _report.txt is the measured region of the disassembly followed by the
-    metrics table, so everything from the rule above the table's title to the
-    end of the file is the section wanted here."""
+    """The metrics section of a _report.txt, or None if it holds none. The
+    file is the measured disassembly then the metrics table, so everything from
+    the rule above the table's title to the end is what is wanted."""
     try:
         with open(report_path) as f:
             lines = f.read().splitlines()
@@ -394,11 +362,9 @@ def extract_metrics(report_path):
 
 
 def write_metrics_file(out_dir, entries, info):
-    """Gather every run's metrics table into one metrics.txt.
-
-    entries is [(label, report file)] in plan order, so the file reads in the
-    same order as the summary above it. A run whose table is missing is named
-    rather than skipped silently."""
+    """Gather every run's metrics table into one metrics.txt. entries is
+    [(label, report file)] in plan order, so the file reads like the summary
+    above it. A run with no table is named, not skipped."""
     blocks, missing = [], []
     for label, report_path in entries:
         block = extract_metrics(report_path)
@@ -523,14 +489,13 @@ def main():
     own_argv, after_separator = split_own_args(sys.argv[1:])
     args, unrecognised = parser.parse_known_args(own_argv)
 
-    # A bare word among the leftovers is a mistyped option far more often than
-    # it is something the configuration wants: a flag that takes a value has to
-    # go after the '--' anyway. Refuse it rather than run the whole sweep with
-    # it, since every run would fail the same way inside gem5.
+    # A bare word among the leftovers is nearly always a mistyped option, and
+    # a flag that takes a value has to go after the '--' anyway. Refuse it
+    # rather than have every run in the sweep fail the same way inside gem5.
     stray = [a for a in unrecognised if not a.startswith("-")]
     if stray:
         print(f"[ERROR] Unrecognised argument(s): {' '.join(stray)}. "
-              f"Flags for the configuration are passed straight through; "
+              f"Flags for the configuration are passed straight through, "
               f"anything that takes a value goes after a '--'.")
         sys.exit(2)
     config_args = unrecognised + after_separator
@@ -716,7 +681,7 @@ def main():
     if failed:
         print(f"[INFO] The failed run(s) left their output under "
               f"{os.path.abspath(GEM5_OUT_DIR)}")
-    # Whatever the sweep emptied goes; anything a plain run_gem5.py run left
+    # Whatever the sweep emptied goes, anything a plain run_gem5.py run left
     # in there stays.
     prune_empty(driver_results_dir(runner))
     prune_empty(GEM5_OUT_DIR)
