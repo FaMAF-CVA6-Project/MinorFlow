@@ -201,6 +201,16 @@ If you use MinorFlow in academic work, please cite it. [CITATION.cff](CITATION.c
 
 Both come out of an undergraduate thesis at FaMAF, Universidad Nacional de Córdoba, asking how closely a gem5 MinorCPU configuration can be made to match a real RISC-V core.
 
+## Cleaning up
+
+`clean_repo.py` deletes what a run leaves in this repository: every `.list` and gem5 debug trace, and every `__pycache__`. A `.vcd` or `.fst` belongs to the Verilator side and is never touched.
+
+```bash
+python3 clean_repo.py [-y] [--dry-run] [-v]
+```
+
+It lists what it found with its size and asks before deleting. The viewer JSONs are left alone and `docs/` is kept whole, since the CARLA 2026 daxpy validation under it is the evidence behind the paper.
+
 ## Licence
 
 Released under the MIT Licence. See [LICENSE](LICENSE).
