@@ -34,6 +34,8 @@ python3 MinorFlow_tracer.py run_results/daxpy_trace.txt -o trace.json
 
 Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window. There is nothing to install and nothing to serve. The viewer is a single self-contained HTML file with no dependencies.
 
+The landing page also offers a sample trace. It is not committed, because of its size. Generate one at `tests/daxpy.config1.json`, or at `tests/daxpy.config1.js` wrapping it as `window.__SAMPLE_TRACE__ = {...}` for `file://` use.
+
 ## Tracer options
 
 ```bash

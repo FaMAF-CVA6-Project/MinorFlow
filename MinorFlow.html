@@ -1930,9 +1930,9 @@
       r.readAsText(f);
     }
 
-    /* Bundled sample trace, two paths: fetch the JSON when served, and fall back to
-     * a <script> tag (setting window.__SAMPLE_TRACE__) under file://, where browsers
-     * block fetch of local files. Both resolve relative to this HTML file. */
+    /* Optional sample trace, not shipped in the repo. Generate it into tests/
+     * to enable the sample button. When served the JSON is fetched, under
+     * file:// a script tag sets window.__SAMPLE_TRACE__ instead. */
     const SAMPLE_URL = 'tests/daxpy.config1.json';
     const SAMPLE_URL_JS = 'tests/daxpy.config1.js';
 
