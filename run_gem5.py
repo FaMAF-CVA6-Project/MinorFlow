@@ -69,7 +69,7 @@ CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
 ERROR_TAIL_LINES = 40
 
 # ==============================================================================
-# OVERHEAD PROFILES (CVA6 configuration)
+# OVERHEAD PROFILES (Reference Core)
 # ==============================================================================
 OVERHEAD_PROFILES = {
     "c": {
@@ -77,20 +77,20 @@ OVERHEAD_PROFILES = {
         "numInsts":         5,
         "icache_miss":      0,
         "dcache_miss":      0,
-        "icache_access":    15,
+        "icache_access":    10,
         "dcache_access":    0,
-        "branch_pred":      4,
+        "branch_pred":      3,
         "branch_miss":      2,
     },
     "asm": {
-        "numCycles":        17,
+        "numCycles":        37,
         "numInsts":         5,
-        "icache_miss":      0,
+        "icache_miss":      1,
         "dcache_miss":      0,
-        "icache_access":    12,
+        "icache_access":    10,
         "dcache_access":    0,
-        "branch_pred":      3,
-        "branch_miss":      1,
+        "branch_pred":      4,
+        "branch_miss":      2,
     },
 }
 
