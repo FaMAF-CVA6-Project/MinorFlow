@@ -58,7 +58,7 @@ Capturing a trace by hand means compiling the test against gem5's `m5op.S`, reme
 Run it **from the gem5 root**: the script takes the current directory as the gem5 root and looks for `./build/RISCV/gem5.opt`, `./include` and `./util/m5/src/abi/riscv/m5op.S` from there.
 
 ```bash
-python3 run_gem5.py <config>.py <test> [--lang c|asm] [--no-trace]
+python3 run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
 ```
 
 | Argument | Meaning |
@@ -66,6 +66,8 @@ python3 run_gem5.py <config>.py <test> [--lang c|asm] [--no-trace]
 | `<config>.py` | The gem5 MinorCPU configuration script, for example [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) |
 | `<test>` | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension |
 | `--lang` | Force the type instead of detecting it |
+| `--build` | Which build to run: a directory name under `build/`, a path to one, or a path to the binary. Defaults to `RISCV` |
+| | A patched CVA6 build is flagged with a warning, since the overhead profile here was measured on a stock one |
 | `--no-trace` | Skip the debug flags and report metrics only. Use it when you only want the numbers, since the trace is the expensive part |
 | anything else | Passed on to the configuration script. A configuration that defines its own options gets them this way |
 
