@@ -125,7 +125,7 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 `run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `run_gem5.py`:
 
 ```bash
-python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--no-trace] [--list]
+python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
 ```
 
 | Option | Meaning |
