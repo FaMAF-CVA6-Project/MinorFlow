@@ -884,6 +884,12 @@
       Stalls
     </label>
 
+    <label class="chk"
+      title="Tint every cycle column in which the data cache held the CPU side off, whatever the cause. Stock gem5 blocks for MSHRs, targets and writeback buffers; a patched one adds the CVA6 preemption causes, the dirty-victim readout, the fence flush and the refill window, which dominate. Machine-wide rather than per instruction, so it draws across every row, and the toggle does nothing on a trace with no blocking.">
+      <input type="checkbox" id="blk-on" onchange="redraw()">
+      D$ blocked
+    </label>
+
     <span class="vsep">│</span>
     <button class="tbtn" id="lblToggleBtn" onclick="toggleLabelPanel()"
       title="Collapse the left label panel to give the timeline more room. Click again to bring the labels back.">◀ Hide Labels</button>
@@ -1080,6 +1086,19 @@
       wb: '#1a5050', cm: '#1a5535',
       memreq: '#b08020', dcmiss: '#d03030', dcStall: '#8f2424',
       sbbuf: '#c07020', lsqWait: '#705090',  // wait to enter the LSQ (request-queue saturation)
+      /* MinorCPU_CVA6.patch. CVA6 has no store-to-load forwarding, so a
+       * colliding load waits for the store buffer to drain (stColl) and then
+       * pays a restart penalty (stReplay). Both sit in the memPush..memIssue
+       * gap, which is blank without them. */
+      stColl: '#8f4aa0', stReplay: '#b06a2a',
+      /* Return address stack. Push and pop are stock and mark the call and
+       * the return that touched the stack; rasDrop is the squash that left
+       * the speculative op standing, which only rasNoRecovery does. */
+      rasPush: '#2a7a5a', rasPop: '#2a6a8a', rasDrop: '#c05020',
+      /* Cycles the data cache held the CPU side off, any cause. Machine-wide
+       * rather than per instruction, so it draws as a column band like the
+       * stall highlight. */
+      cacheBlk: '#7a4a2a',
       flushed: '#3a1515',  // dimmed red used for everything on a flushed instruction
       /* Forwarding into a flushed consumer. The flushed stage colour itself is
        * near the background by design, which makes a two-pixel line on it
@@ -1158,7 +1177,13 @@
       'flushCycle',
       'f1reqA', 'f1respA', 'f1reqB', 'f1respB',
       '_fuDone_data_arrival', '_origFuDone',
+      'rasPush', 'rasPop', 'rasDropped',
     ];
+
+    /* Cycle-typed fields holding a list rather than one value. They rebase the
+     * same way, one level down, and are left out of the extent scan because
+     * every cycle in them already lies between memPush and memIssue. */
+    const CYCLE_LIST_KEYS = ['collisionWait', 'collisionReplay'];
 
     /* ============================================================================
      * SECTION 2 - State
@@ -1176,6 +1201,9 @@
      * per-instruction so store writebacks are included. dcEventsPresent is false
      * for traces parsed before dc_events. */
     let dcAccessCycles = [], dcMissCyclesArr = [], dcStoreAccessCyclesArr = [], dcStoreMissCyclesArr = [];
+    /* {cause name: [[startCycle, endCycle], ...]} from the patch's blocking
+     * causes. Empty for a trace from a stock build, which never emits them. */
+    let dcBlockedSpans = {};
     /* Misses that allocated an MSHR rather than coalescing into one. This is
      * the figure run_gem5.py reports as the D-cache miss count
      * (l1dcaches.overallMshrMisses::total). Absent on older JSONs. */
@@ -2030,6 +2058,7 @@
       const dcEv = data.dc_events || {};
       dcAccessCycles = (dcEv.access_cycles || []).slice().sort((a, b) => a - b);
       dcMissCyclesArr = (dcEv.miss_cycles || []).slice().sort((a, b) => a - b);
+      dcBlockedSpans = dcEv.blocked_spans || {};
       dcStoreAccessCyclesArr = (dcEv.store_access_cycles || []).slice().sort((a, b) => a - b);
       dcStoreMissCyclesArr = (dcEv.store_miss_cycles || []).slice().sort((a, b) => a - b);
       dcMshrMissCyclesArr = (dcEv.mshr_miss_cycles || []).slice().sort((a, b) => a - b);
@@ -3246,6 +3275,9 @@
           for (const k of CYCLE_KEYS) {
             if (r[k] !== null && r[k] !== undefined) r[k] -= offset;
           }
+          for (const k of CYCLE_LIST_KEYS) {
+            if (Array.isArray(r[k])) r[k] = r[k].map(c => c - offset);
+          }
           return r;
         });
       }
@@ -3815,6 +3847,11 @@
         { key: 'memreq', label: 'Mem request', color: COL.memreq, desc: 'A load or store in flight, from the LSQ through the data cache to its response.' },
         { key: 'dcmiss', label: 'DCache miss', color: COL.dcmiss, desc: 'A load or store request that missed the data cache, red and labelled "ld✗" or "st✗". It counts toward the data-cache totals in the config panel.' },
         { key: 'dcStall', label: 'DCache stall', color: COL.dcStall, desc: 'The data-cache fill wait after a load or store miss, a darker red that follows the red request.' },
+        { key: 'rasPush', label: 'RAS push', color: COL.rasPush, desc: 'A call pushed its return address onto the return address stack, at the cycle Fetch2 decoded it.' },
+        { key: 'rasPop', label: 'RAS pop', color: COL.rasPop, desc: 'A return popped a predicted target off the return address stack, at the cycle Fetch2 decoded it.' },
+        { key: 'rasDrop', label: 'RAS left unrepaired', color: COL.rasDrop, desc: 'This instruction was squashed and its speculative push or pop was left standing instead of being undone, so the stack no longer matches the real call depth. CVA6 has no mispredict repair on its scan-driven stack, and the patch transcribes that as rasNoRecovery. Patched builds only.' },
+        { key: 'stColl', label: 'Store collision', color: COL.stColl, desc: 'The load collided with a pending store and CVA6 has no store-to-load forwarding, so it waits in the load-store queue for the store buffer to drain (load_unit.sv WAIT_PAGE_OFFSET). Patched builds only.' },
+        { key: 'stReplay', label: 'Collision replay', color: COL.stReplay, desc: 'The restart penalty a collided load pays once the store buffer has drained, before it can present its request again. Patched builds only.' },
         { key: 'sbbuf', label: 'Store buffer', color: COL.sbbuf, desc: 'A store waiting in the store buffer until it is written to the data cache.' },
         { key: 'wb', label: 'Commit wait', color: COL.wb, desc: 'A completed instruction waiting for in-order commit because an older instruction is still in a functional unit. This is NOT a write-back stage, MinorCPU has none, it is purely the wait for commit.' },
         { key: 'cm', label: 'Commit', color: COL.cm, desc: 'The instruction committed and its architectural state is now visible.' },
@@ -3879,6 +3916,11 @@
           if (ins.memIssue !== null && ins.memComplete !== null && ins.memComplete > ins.memIssue + 1) present.add('dcStall');
         }
         if (ins.sbPush !== null) present.add('sbbuf');
+        if (ins.collisionWait) present.add('stColl');
+        if (ins.rasPush != null) present.add('rasPush');
+        if (ins.rasPop != null) present.add('rasPop');
+        if (ins.rasDropped != null) present.add('rasDrop');
+        if (ins.collisionReplay) present.add('stReplay');
         if (ins.branchOutcome === 'mispred') present.add('flush');
         if (ins.branchOutcome === 'unpred') present.add('unpred');
         if (ins.branchOutcome === 'correct') present.add('correct');
@@ -4076,6 +4118,32 @@
       if (document.getElementById('stallhl-on')?.checked) {
         stallSet = classifyStallCycles(vis, cMin, cMax).totalStall;
       }
+      /* Cache-blocked columns, flattened across causes. Null when the toggle is
+       * off or the trace carries none, which is every stock-build trace. */
+      let blockedSpans = null;
+      if (document.getElementById('blk-on')?.checked) {
+        const all = [];
+        for (const cause of Object.keys(dcBlockedSpans))
+          for (const s of dcBlockedSpans[cause]) all.push(s);
+        if (all.length) blockedSpans = all;
+      }
+      /* Either band needs the rows translucent to stay visible underneath. */
+      const bandsActive = !!((stallSet && stallSet.size) || blockedSpans);
+      if (blockedSpans) {
+        ctx.fillStyle = 'rgba(210,130,70,0.13)';
+        rctx.fillStyle = 'rgba(210,130,70,0.24)';
+        for (const [a, b] of blockedSpans) {
+          /* Held in raw trace cycles, like the cache event arrays, so they
+           * rebase here rather than at load. */
+          const lo = Math.max(a - cycleOffset, firstCyc);
+          const hi = Math.min(b - cycleOffset, lastCyc + 1);
+          if (hi <= lo) continue;
+          const x = (lo - firstCyc) * cellW;
+          const w = Math.max(1, (hi - lo) * cellW);
+          ctx.fillRect(x, 0, w, vpH);
+          rctx.fillRect(x, 0, w, RULER_H);
+        }
+      }
       if (stallSet && stallSet.size) {
         ctx.fillStyle = 'rgba(120,150,210,0.13)';
         for (let c = firstCyc; c <= lastCyc; c++) {
@@ -4131,9 +4199,9 @@
         const ry = (r - firstRow) * ROW_H;
         const even = r % 2 === 0;
 
-        /* Row backgrounds: opaque normally, translucent when the stall highlight
-         * is active so the full-height stall bands stay visible underneath. */
-        if (!stallSet) {
+        /* Row backgrounds: opaque normally, translucent while either column band
+         * is on so the full-height bands stay visible underneath. */
+        if (!bandsActive) {
           ctx.fillStyle = even ? '#1c1c1e' : '#1a1a1c'; ctx.fillRect(0, ry, vpW, ROW_H);
         } else {
           ctx.fillStyle = even ? 'rgba(28,28,30,0.55)' : 'rgba(26,26,28,0.55)';
@@ -4268,6 +4336,18 @@
           ctx.fillText(label, x + 3, yy + hh - 2);
           ctx.restore();
         }
+      }
+
+      /* [78,79,80,86] -> [[78,81],[86,87]]: the cycle lists the tracer emits
+       * draw as a few strips rather than one per cycle. */
+      function runsOf(cycles) {
+        const out = [];
+        for (const c of cycles) {
+          const last = out[out.length - 1];
+          if (last && last[1] === c) last[1] = c + 1;
+          else out.push([c, c + 1]);
+        }
+        return out;
       }
 
       /* Thin overlay strip at a fixed pixel offset from top. For memory events. */
@@ -4500,6 +4580,16 @@
           strip(ins.memIssue, ins.memComplete, COL.memreq, 0, sH, 'mem');
         }
       }
+      /* Store-collision hold, from MinorCPU_CVA6.patch. The load sits in the
+       * LSQ while the store buffer drains, then pays the restart penalty. The
+       * two together fill memPush..memIssue exactly. */
+      if (ins.collisionWait)
+        for (const [a, b] of runsOf(ins.collisionWait))
+          strip(a, b, COL.stColl, 0, sH, 'st coll');
+      if (ins.collisionReplay)
+        for (const [a, b] of runsOf(ins.collisionReplay))
+          strip(a, b, COL.stReplay, 0, sH, 'replay');
+
       /* LSQ-entry wait between fuDone and memPush, gem5 holding the
        * instruction in inFUMemInsts while canRequest() is false. Stores only: a
        * load's fuDone is its completion, so its pre-LSQ wait is a data stall. */
@@ -4523,6 +4613,17 @@
           : (ins.ex ?? ins.flushCycle ?? ins.dec);
         if (cell !== null) strip(cell, cell + 1, bCol, 0, sH, lbl);
       }
+
+      /* Return-address-stack activity, one row below the branch marker so a
+       * return that both pops and mispredicts shows each of them. rasDropped
+       * is the patched squash that left the speculative op in place. */
+      if (ins.rasPush != null)
+        strip(ins.rasPush, ins.rasPush + 1, COL.rasPush, sH + 1, sH, 'ras+');
+      if (ins.rasPop != null)
+        strip(ins.rasPop, ins.rasPop + 1, COL.rasPop, sH + 1, sH, 'ras-');
+      if (ins.rasDropped != null)
+        strip(ins.rasDropped, ins.rasDropped + 1, COL.rasDrop, sH + 1, sH,
+          'ras!');
 
       /* Pre-fetch FE-block cell: cycles where Fetch1 was blocked from issuing this
        * record's f1req. The bubble and the redirect delay cover the right edge of

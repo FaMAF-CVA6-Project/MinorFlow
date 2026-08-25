@@ -65,6 +65,41 @@ RE_COMMITSTALL = re.compile(
     r'stalled for (\d+) more cycles')
 RE_DCCOALESCE = re.compile(r'l1dcaches: \w+ coalescing MSHR for ')
 
+# Added by MinorCPU_CVA6.patch. A colliding load waits in the LSQ while the
+# store buffer drains, then pays a restart penalty. Neither line names its
+# instruction, so the id comes from the request the LSQ reports on the tick.
+RE_SBWAIT = re.compile(r'lsq: Load partly satisfied by store buffer')
+RE_SBREPLAY = re.compile(r'lsq: Store collision cleared, (\d+) replay')
+RE_LSQ_HELD = re.compile(
+    r'lsq: No matching memory response for inst: (\S+) pc:')
+
+# Cache port blocking, by cause. Stock gem5 emits it, but only the patch gives
+# the L1D causes that dominate: on daxpy victim readout blocks 1,308 times
+# against 19 for no-MSHRs.
+#
+# The spans are in CPU cycles, so their total runs a little above the cache's
+# own blockedCycles stat: some end a tick short of a CPU edge and so cover
+# three cycles of this timeline where the cache counts two of its own.
+RE_CACHEBLOCK = re.compile(
+    r'(l1[id]caches): (Blocking|Unblocking) for cause (\d+)')
+
+# Return address stack. push and pop are stock and carry the depth; drop is the
+# path rasNoRecovery takes on a squash, leaving the speculative push or pop in
+# place instead of undoing it.
+RE_RAS_PUSH = re.compile(r'ras: push: RAS\[\d+\] <= \S+\. Entries used: (\d+)')
+RE_RAS_POP = re.compile(r'ras: pop: RAS\[\d+\] => \S+\. Entries used: (\d+)')
+RE_RAS_DROP = re.compile(r'ras: RAS::drop leaving speculative op in place')
+
+# BaseCache::BlockedCause. 0 to 2 are stock, 3 to 5 are the patch's.
+BLOCKED_CAUSES = {
+    0: 'no_mshrs',
+    1: 'no_wb_buffers',
+    2: 'no_targets',
+    3: 'victim_readout',
+    4: 'fence_flush',
+    5: 'refill_window',
+}
+
 RE_COMPRESSED = re.compile(r'^c[_.]')
 
 
@@ -197,6 +232,19 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     ic_miss_cycles = set()
     ic_hit_cycles = set()
     dcache_by_cycle = {}  # cycle -> {miss, isWrite, coalesced}
+    collision_wait = {}   # fetchSeq -> [cycles held by a store collision]
+    collision_replay = {}  # fetchSeq -> [cycles of the restart penalty]
+    pending_collision = [None]   # cycle whose collision still needs its id
+    held_by_collision = [None]   # fetchSeq the replay countdown belongs to
+    ras_push = {}         # fetchSeq -> cycle its call pushed a return address
+    ras_pop = {}          # fetchSeq -> cycle its return popped one
+    ras_drop = {}         # fetchSeq -> cycle its squash left the stack alone
+    ras_depth = []        # [[cycle, entries used], ...] after each push or pop
+    ras_drop_cycles = []  # every drop, including any with no id to hang it on
+    last_f2 = [None, None]       # (cycle, fetchSeq) of the newest fetch2 line
+    last_discard = [None, None]  # (cycle, fetchSeq) of the newest discard line
+    blocked_open = {}     # (cache, cause) -> cycle the block began
+    blocked_spans = {}    # cache -> {cause name: [[start, end], ...]}
     commit_list = []    # {cycle, pc, instr, fu, fetchSeq, upc}
     # fetchSeq -> latest minimumCommitCycle seen. Keyed by fetchSeq, not
     # execSeq, so a stall on either micro-op of a split macro-op lands on the
@@ -221,6 +269,22 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         if not tm:
             continue
         cycle = round_half_up(int(tm.group(1)) / tpc)
+
+        # A collision line names no instruction. The LSQ reports the request
+        # it is holding on the same tick, and that is the load, so the id is
+        # taken from there rather than guessed from the queue.
+        if pending_collision[0] is not None:
+            if pending_collision[0] != cycle:
+                pending_collision[0] = None
+            elif 'No matching memory response' in l:
+                mm = RE_LSQ_HELD.search(l)
+                if mm:
+                    mmm = RE_ID_FULL.search(mm.group(1))
+                    if mmm:
+                        fseq = int(mmm.group(3))
+                        collision_wait.setdefault(fseq, []).append(cycle)
+                        held_by_collision[0] = fseq
+                        pending_collision[0] = None
 
         m = RE_BP.search(l)
         if m:
@@ -271,6 +335,50 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                     break
             continue
 
+        # Guarded on a substring first: these three are rare and the loop
+        # runs once per line of a trace that reaches hundreds of megabytes.
+        if 'partly satisfied' in l and RE_SBWAIT.search(l):
+            pending_collision[0] = cycle
+            continue
+
+        if 'collision cleared' in l and RE_SBREPLAY.search(l):
+            if held_by_collision[0] is not None:
+                collision_replay.setdefault(
+                    held_by_collision[0], []).append(cycle)
+            continue
+
+        # The RAS names no instruction. A push or a pop belongs to the call or
+        # return fetch2 saw this cycle; a drop belongs to the instruction whose
+        # squash discarded it. Anything with no anchor still counts globally.
+        if 'ras: ' in l:
+            m = RE_RAS_PUSH.search(l) or RE_RAS_POP.search(l)
+            if m:
+                ras_depth.append([cycle, int(m.group(1))])
+                if last_f2[0] == cycle:
+                    target = ras_push if 'push:' in l else ras_pop
+                    target.setdefault(last_f2[1], cycle)
+                continue
+            if RE_RAS_DROP.search(l):
+                ras_drop_cycles.append(cycle)
+                if last_discard[0] == cycle:
+                    ras_drop.setdefault(last_discard[1], cycle)
+                continue
+
+        if 'for cause ' in l:
+            m = RE_CACHEBLOCK.search(l)
+            if m:
+                key = (m.group(1), int(m.group(3)))
+                if m.group(2) == 'Blocking':
+                    blocked_open.setdefault(key, cycle)
+                else:
+                    start = blocked_open.pop(key, None)
+                    if start is not None:
+                        cause = BLOCKED_CAUSES.get(
+                            key[1], f'cause_{key[1]}')
+                        blocked_spans.setdefault(key[0], {}).setdefault(
+                            cause, []).append([start, cycle])
+                continue
+
         m = RE_COMMITSTALL.search(l)
         if m:
             fseq = int(m.group(2))
@@ -320,6 +428,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 fseq = int(mm.group(3))
                 if fseq not in fetch2_map:
                     fetch2_map[fseq] = cycle
+                last_f2[0], last_f2[1] = cycle, fseq
             continue
 
         m = RE_MINORINST.search(l)
@@ -407,6 +516,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 fseq = int(mm.group(3))
                 if fseq not in discard_map:
                     discard_map[fseq] = cycle
+                last_discard[0], last_discard[1] = cycle, fseq
             continue
 
         if 'T0' in l:
@@ -655,6 +765,11 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'dcMissIsStore': _dc_miss_store(lsq_evt, dcache_by_cycle),
             'sbPush': sb_evt.get('pushCycle') if sb_evt else None,
             'sbDelete': sb_evt.get('deleteCycle') if sb_evt else None,
+            'collisionWait': collision_wait.get(seq) or None,
+            'collisionReplay': collision_replay.get(seq) or None,
+            'rasPush': ras_push.get(seq),
+            'rasPop': ras_pop.get(seq),
+            'rasDropped': ras_drop.get(seq),
             'flushCycle': branch_resolve_cyc,
             'flushed': is_discarded,
             'isControl': is_ctrl,
@@ -709,7 +824,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     return {
         'metadata': {
             'tool': 'minorflow_tracer',
-            'schema_version': 1,
+            'schema_version': 2,
             'clock_period_ps': tpc,
             'pipe_delays': {'f1_f2': pipe_f1f2, 'f2_dec': pipe_f2dec, 'dec_ex': pipe_dec_ex},
             'n_instructions': len(records),
@@ -720,6 +835,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         'ic_events': {
             'access_cycles': ic_access_cycles,
             'miss_cycles': ic_miss_arr,
+            'blocked_spans': blocked_spans.get('l1icaches', {}),
         },
         'dc_events': {
             'access_cycles': dc_access_cycles,
@@ -728,6 +844,11 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'store_miss_cycles': dc_store_miss_cycles,
             'mshr_miss_cycles': dc_mshr_miss_cycles,
             'store_mshr_miss_cycles': dc_store_mshr_miss_cycles,
+            'blocked_spans': blocked_spans.get('l1dcaches', {}),
+        },
+        'ras_events': {
+            'depth': ras_depth,
+            'drop_cycles': ras_drop_cycles,
         },
         'instructions': records,
     }
