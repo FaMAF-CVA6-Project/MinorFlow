@@ -85,6 +85,18 @@ The test is compiled into the gem5 output folder rather than beside the source, 
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
 
+A **patched build adds a third, `NET (CVA6)`**. The HPDcache PMU re-presents a demand on every cycle a preemption blocks the port, so its access counts run above gem5's. The patch counts those cycles, and the column adds them to the cache-access rows, leaving every other row reading as `NET`. It appears only when the run produced the counter, which is to say only on a patched build.
+
+### What a patched build adds
+
+`MinorCPU_CVA6.patch` puts two mechanisms in the trace that a stock build has no counterpart for, and the viewer draws both.
+
+**Store-collision hold.** CVA6 has no store-to-load forwarding, so a load whose address collides with a pending store waits in the load-store queue for the store buffer to drain, then pays a restart penalty before presenting its request again. The two together fill the gap between `memPush` and `memIssue`, which is blank without them, and appear as `st coll` and `replay` strips with their own legend entries. On `store_fwd` one load waits nine cycles and replays for two.
+
+**Data-cache blocking.** The `D$ blocked` toggle tints every cycle column in which the cache held the CPU side off. Stock gem5 blocks for MSHRs, targets and writeback buffers; the patch adds the dirty-victim readout, the fence flush and the refill window, and on daxpy those dominate at 1,308 blocks against 19. Blocking is a property of the cache rather than of any one instruction, so it draws as a band across every row, like the stall highlight.
+
+**Return address stack.** `run_gem5.py` now enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them.
+
 A configuration script may define options of its own. Any flag `run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
 
 ```bash

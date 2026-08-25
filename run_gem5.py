@@ -69,7 +69,7 @@ CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
 ERROR_TAIL_LINES = 40
 
 # ==============================================================================
-# OVERHEAD PROFILES (Reference Core)
+# OVERHEAD PROFILES (Reference Core no patch, measured on MinorFlow benchmarks)
 # ==============================================================================
 OVERHEAD_PROFILES = {
     "c": {
@@ -104,6 +104,8 @@ METRICS_MAP = {
     "dcache_miss":       r"l1dcaches\.overallMshrMisses::total",
     "icache_access":     r"l1icaches\.overallAccesses::total",
     "dcache_access":     r"l1dcaches\.overallAccesses::total",
+    "icache_preempt":    r"l1icaches\.preemptionBlockedCycles",
+    "dcache_preempt":    r"l1dcaches\.preemptionBlockedCycles",
     "bp_look_d_cond":    r"branchPred\.btb\.lookups::DirectCond\b",
     "bp_look_d_uncond":  r"branchPred\.btb\.lookups::DirectUncond\b",
     "bp_look_i_cond":    r"branchPred\.btb\.lookups::IndirectCond\b",
@@ -136,6 +138,11 @@ PRETTY_NAMES = {
     "branch_miss": "Branch Miss + Unpred",
     "simSeconds": "Time (us)",
     "ipc": "IPC",
+}
+
+CVA6_PREEMPTION = {
+    "icache_access": "icache_preempt",
+    "dcache_access": "dcache_preempt",
 }
 
 
@@ -356,8 +363,11 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
         print(f"[INFO] Enabling detailed debug traces in: "
               f"{os.path.join(out_dir, trace_file)}")
         cmd.extend([
+            # RAS is stock but off by default. It carries the stack depth and,
+            # on a patched build, the drop the no-recovery model takes instead
+            # of repairing the stack on a squash.
             "--debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,"
-            "Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback",
+            "Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS",
             f"--debug-file={trace_file}",
         ])
 
@@ -457,6 +467,10 @@ def collect_results(program_name, out_dir, results_dir):
 def parse_stats(stats_path):
     print("[INFO] Extracting statistics")
     results = {key: 0.0 for key in METRICS_MAP}
+    # None rather than zero: a stock build never writes these, and gem5 omits
+    # one that is zero, so the two cases have to stay apart from a real count.
+    for key in CVA6_PREEMPTION.values():
+        results[key] = None
 
     block_count = 0
     in_target_block = False
@@ -506,16 +520,21 @@ def parse_stats(stats_path):
     return results
 
 
-def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
+def print_table(results, overhead, report_file=None,
+                header=("RESULTS TABLE",), show_cva6=False):
     output_buffer = []
 
     # The rule is widened when the title is longer, so the box never breaks.
-    width = max(70, max(len(line) for line in header))
+    # A third column needs 18 more, which is the minimum the rule can be.
+    width = max(79 if show_cva6 else 70, max(len(line) for line in header))
 
     output_buffer.append("\n" + "=" * width)
     output_buffer.extend(header)
     output_buffer.append("=" * width)
-    output_buffer.append(f"{'METRIC':<25} | {'OFFICIAL':>15} | {'NET':>15}")
+    columns = f"{'METRIC':<25} | {'OFFICIAL':>15} | {'NET':>15}"
+    if show_cva6:
+        columns += f" | {'NET (CVA6)':>15}"
+    output_buffer.append(columns)
     output_buffer.append("=" * width)
 
     keys_order = ["numCycles", "numInsts", "icache_miss", "dcache_miss",
@@ -524,6 +543,7 @@ def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
 
     clean_array_official = []
     clean_array_corrected = []
+    clean_array_cva6 = []
 
     # Pre-compute the corrected IPC (with overhead removed).
     raw_insts = results.get("numInsts", 0)
@@ -560,30 +580,49 @@ def print_table(results, overhead, report_file=None, header=("RESULTS TABLE",)):
         else:
             val_corrected = max(0, val_official - ovh)
 
+        # The CVA6 column carries the same scaffolding subtraction as NET, and
+        # repeats NET on every row the patch has no counter for, so it reads as
+        # one complete alternative rather than a scattering of cells.
+        source = CVA6_PREEMPTION.get(key)
+        preempt = results.get(source) if source else None
+        val_cva6 = (val_corrected if preempt is None
+                    else max(0, val_official + preempt - ovh))
+
         if key == "simSeconds":
             val_off_us = time_us
             val_cor_us = net_time_us
             clean_array_official.append(round(val_off_us, 4))
             clean_array_corrected.append(round(val_cor_us, 4))
+            clean_array_cva6.append(round(val_cor_us, 4))
             fmt_off = format_metric(val_off_us)
             fmt_cor = format_metric(val_cor_us)
+            fmt_cva6 = fmt_cor
         elif key == "ipc":
             clean_array_official.append(round(val_official, 4))
             clean_array_corrected.append(round(val_corrected, 4))
+            clean_array_cva6.append(round(val_cva6, 4))
             fmt_off = format_metric(val_official)
             fmt_cor = format_metric(val_corrected)
+            fmt_cva6 = format_metric(val_cva6)
         else:
             clean_array_official.append(int(val_official))
             clean_array_corrected.append(int(val_corrected))
+            clean_array_cva6.append(int(val_cva6))
             fmt_off = format_metric(int(val_official))
             fmt_cor = format_metric(int(val_corrected))
+            fmt_cva6 = format_metric(int(val_cva6))
 
-        output_buffer.append(f"{label:<25} | {fmt_off:>15} | {fmt_cor:>15}")
+        row = f"{label:<25} | {fmt_off:>15} | {fmt_cor:>15}"
+        if show_cva6:
+            row += f" | {fmt_cva6:>15}"
+        output_buffer.append(row)
 
     output_buffer.append("=" * width + "\n")
     output_buffer.append(f"Clean result (OFFICIAL):  {clean_array_official}")
-    output_buffer.append(
-        f"Clean result (NET):       {clean_array_corrected}\n")
+    output_buffer.append(f"Clean result (NET):       {clean_array_corrected}")
+    if show_cva6:
+        output_buffer.append(f"Clean result (NET CVA6):  {clean_array_cva6}")
+    output_buffer.append("")
 
     for line in output_buffer:
         print(line)
@@ -683,7 +722,11 @@ if __name__ == "__main__":
     config_label = " ".join([os.path.basename(config_file)] + list(config_args))
     header = build_table_header("gem5", config_label,
                                 os.path.basename(src_file), geometry)
-    print_table(metrics, overhead, report_file, header)
+    # The column appears exactly when the run produced the counters, which is
+    # to say when a patched build ran. A stock build writes none of them.
+    show_cva6 = any(metrics.get(key) is not None
+                    for key in CVA6_PREEMPTION.values())
+    print_table(metrics, overhead, report_file, header, show_cva6)
 
     # Done last, so the _report.txt copied out already carries the table.
     collect_results(program_name, args.gem5_out_dir, args.results_dir)
