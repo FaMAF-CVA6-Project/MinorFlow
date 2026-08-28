@@ -885,9 +885,9 @@
     </label>
 
     <label class="chk"
-      title="Tint every cycle column in which the data cache held the CPU side off, whatever the cause. Stock gem5 blocks for MSHRs, targets and writeback buffers; a patched one adds the CVA6 preemption causes, the dirty-victim readout, the fence flush and the refill window, which dominate. Machine-wide rather than per instruction, so it draws across every row, and the toggle does nothing on a trace with no blocking.">
+      title="Tint every cycle column in which the data cache held a request off, in either of its two forms. Blocking refuses the port, for stock causes such as MSHRs and targets and for the patch's dirty-victim readout, fence flush and refill window. Accept-and-charge, which the production configuration uses, takes the request and charges it the window instead. Machine-wide rather than per instruction, so it draws across every row, and the toggle does nothing on a trace with neither.">
       <input type="checkbox" id="blk-on" onchange="redraw()">
-      D$ blocked
+      D$ held
     </label>
 
     <span class="vsep">│</span>
@@ -1095,9 +1095,9 @@
        * the return that touched the stack; rasDrop is the squash that left
        * the speculative op standing, which only rasNoRecovery does. */
       rasPush: '#2a7a5a', rasPop: '#2a6a8a', rasDrop: '#c05020',
-      /* Cycles the data cache held the CPU side off, any cause. Machine-wide
-       * rather than per instruction, so it draws as a column band like the
-       * stall highlight. */
+      /* Cycles the data cache held a request off, by blocking the port or by
+       * charging the window. Machine-wide rather than per instruction, so it
+       * draws as a column band like the stall highlight. */
       cacheBlk: '#7a4a2a',
       flushed: '#3a1515',  // dimmed red used for everything on a flushed instruction
       /* Forwarding into a flushed consumer. The flushed stage colour itself is
@@ -1204,6 +1204,9 @@
     /* {cause name: [[startCycle, endCycle], ...]} from the patch's blocking
      * causes. Empty for a trace from a stock build, which never emits them. */
     let dcBlockedSpans = {};
+    /* The accept-and-charge form of the same mechanisms. The two never appear
+     * together: one blocks the port, the other charges the request. */
+    let dcChargeSpans = {};
     /* Misses that allocated an MSHR rather than coalescing into one. This is
      * the figure run_gem5.py reports as the D-cache miss count
      * (l1dcaches.overallMshrMisses::total). Absent on older JSONs. */
@@ -2059,6 +2062,7 @@
       dcAccessCycles = (dcEv.access_cycles || []).slice().sort((a, b) => a - b);
       dcMissCyclesArr = (dcEv.miss_cycles || []).slice().sort((a, b) => a - b);
       dcBlockedSpans = dcEv.blocked_spans || {};
+      dcChargeSpans = dcEv.charge_spans || {};
       dcStoreAccessCyclesArr = (dcEv.store_access_cycles || []).slice().sort((a, b) => a - b);
       dcStoreMissCyclesArr = (dcEv.store_miss_cycles || []).slice().sort((a, b) => a - b);
       dcMshrMissCyclesArr = (dcEv.mshr_miss_cycles || []).slice().sort((a, b) => a - b);
@@ -4118,13 +4122,14 @@
       if (document.getElementById('stallhl-on')?.checked) {
         stallSet = classifyStallCycles(vis, cMin, cMax).totalStall;
       }
-      /* Cache-blocked columns, flattened across causes. Null when the toggle is
-       * off or the trace carries none, which is every stock-build trace. */
+      /* Held columns, flattened across causes and across both forms. Null when
+        * the toggle is off or the trace carries none, as a stock trace does. */
       let blockedSpans = null;
       if (document.getElementById('blk-on')?.checked) {
         const all = [];
-        for (const cause of Object.keys(dcBlockedSpans))
-          for (const s of dcBlockedSpans[cause]) all.push(s);
+        for (const src of [dcBlockedSpans, dcChargeSpans])
+          for (const cause of Object.keys(src))
+            for (const s of src[cause]) all.push(s);
         if (all.length) blockedSpans = all;
       }
       /* Either band needs the rows translucent to stay visible underneath. */

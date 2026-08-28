@@ -90,6 +90,11 @@ RE_RAS_PUSH = re.compile(r'ras: push: RAS\[\d+\] <= \S+\. Entries used: (\d+)')
 RE_RAS_POP = re.compile(r'ras: pop: RAS\[\d+\] => \S+\. Entries used: (\d+)')
 RE_RAS_DROP = re.compile(r'ras: RAS::drop leaving speculative op in place')
 
+# The accept-and-charge form of the same mechanisms. Instead of blocking the
+# port, the cache takes the request and charges it the cycles, so these never
+# appear in the same run as the blocking lines above.
+RE_WINDOW = re.compile(r'(l1[id]caches): Window (trigger|overlap) charged (\d+) cycles')
+
 # BaseCache::BlockedCause. 0 to 2 are stock, 3 to 5 are the patch's.
 BLOCKED_CAUSES = {
     0: 'no_mshrs',
@@ -245,6 +250,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     last_discard = [None, None]  # (cycle, fetchSeq) of the newest discard line
     blocked_open = {}     # (cache, cause) -> cycle the block began
     blocked_spans = {}    # cache -> {cause name: [[start, end], ...]}
+    charge_spans = {}     # cache -> {window kind: [[start, end], ...]}
     commit_list = []    # {cycle, pc, instr, fu, fetchSeq, upc}
     # fetchSeq -> latest minimumCommitCycle seen. Keyed by fetchSeq, not
     # execSeq, so a stall on either micro-op of a split macro-op lands on the
@@ -362,6 +368,14 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 ras_drop_cycles.append(cycle)
                 if last_discard[0] == cycle:
                     ras_drop.setdefault(last_discard[1], cycle)
+                continue
+
+        if 'Window ' in l:
+            m = RE_WINDOW.search(l)
+            if m:
+                cycles = int(m.group(3))
+                charge_spans.setdefault(m.group(1), {}).setdefault(
+                    f'window_{m.group(2)}', []).append([cycle, cycle + cycles])
                 continue
 
         if 'for cause ' in l:
@@ -836,6 +850,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'access_cycles': ic_access_cycles,
             'miss_cycles': ic_miss_arr,
             'blocked_spans': blocked_spans.get('l1icaches', {}),
+            'charge_spans': charge_spans.get('l1icaches', {}),
         },
         'dc_events': {
             'access_cycles': dc_access_cycles,
@@ -845,6 +860,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'mshr_miss_cycles': dc_mshr_miss_cycles,
             'store_mshr_miss_cycles': dc_store_mshr_miss_cycles,
             'blocked_spans': blocked_spans.get('l1dcaches', {}),
+            'charge_spans': charge_spans.get('l1dcaches', {}),
         },
         'ras_events': {
             'depth': ras_depth,

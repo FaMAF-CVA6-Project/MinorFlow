@@ -106,6 +106,10 @@ METRICS_MAP = {
     "dcache_access":     r"l1dcaches\.overallAccesses::total",
     "icache_preempt":    r"l1icaches\.preemptionBlockedCycles",
     "dcache_preempt":    r"l1dcaches\.preemptionBlockedCycles",
+    "icache_win_trig":   r"l1icaches\.windowTriggerCycles",
+    "dcache_win_trig":   r"l1dcaches\.windowTriggerCycles",
+    "icache_win_over":   r"l1icaches\.windowOverlapCycles",
+    "dcache_win_over":   r"l1dcaches\.windowOverlapCycles",
     "bp_look_d_cond":    r"branchPred\.btb\.lookups::DirectCond\b",
     "bp_look_d_uncond":  r"branchPred\.btb\.lookups::DirectUncond\b",
     "bp_look_i_cond":    r"branchPred\.btb\.lookups::IndirectCond\b",
@@ -140,9 +144,9 @@ PRETTY_NAMES = {
     "ipc": "IPC",
 }
 
-CVA6_PREEMPTION = {
-    "icache_access": "icache_preempt",
-    "dcache_access": "dcache_preempt",
+CVA6_EXTRA = {
+    "icache_access": ("icache_preempt", "icache_win_trig", "icache_win_over"),
+    "dcache_access": ("dcache_preempt", "dcache_win_trig", "dcache_win_over"),
 }
 
 
@@ -469,8 +473,9 @@ def parse_stats(stats_path):
     results = {key: 0.0 for key in METRICS_MAP}
     # None rather than zero: a stock build never writes these, and gem5 omits
     # one that is zero, so the two cases have to stay apart from a real count.
-    for key in CVA6_PREEMPTION.values():
-        results[key] = None
+    for keys in CVA6_EXTRA.values():
+        for key in keys:
+            results[key] = None
 
     block_count = 0
     in_target_block = False
@@ -583,10 +588,10 @@ def print_table(results, overhead, report_file=None,
         # The CVA6 column carries the same scaffolding subtraction as NET, and
         # repeats NET on every row the patch has no counter for, so it reads as
         # one complete alternative rather than a scattering of cells.
-        source = CVA6_PREEMPTION.get(key)
-        preempt = results.get(source) if source else None
-        val_cva6 = (val_corrected if preempt is None
-                    else max(0, val_official + preempt - ovh))
+        found = [results.get(k) for k in CVA6_EXTRA.get(key, ())
+                 if results.get(k) is not None]
+        val_cva6 = (val_corrected if not found
+                    else max(0, val_official + sum(found) - ovh))
 
         if key == "simSeconds":
             val_off_us = time_us
@@ -725,7 +730,7 @@ if __name__ == "__main__":
     # The column appears exactly when the run produced the counters, which is
     # to say when a patched build ran. A stock build writes none of them.
     show_cva6 = any(metrics.get(key) is not None
-                    for key in CVA6_PREEMPTION.values())
+                    for keys in CVA6_EXTRA.values() for key in keys)
     print_table(metrics, overhead, report_file, header, show_cva6)
 
     # Done last, so the _report.txt copied out already carries the table.
