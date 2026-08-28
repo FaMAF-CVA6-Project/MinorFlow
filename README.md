@@ -83,17 +83,17 @@ If a run fails nothing is deleted, and gem5's whole stdout and stderr are writte
 
 The test is compiled into the gem5 output folder rather than beside the source, so a run touches nothing outside its own folders. `--gem5-out-dir` and `--results-dir` move those folders, which is how the sweep gives concurrent runs one each.
 
-The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead.
-
-A **patched build adds a third, `NET (CVA6)`**. The HPDcache PMU re-presents a demand on every cycle a preemption blocks the port, so its access counts run above gem5's. The patch counts those cycles, and the column adds them to the cache-access rows, leaving every other row reading as `NET`. It appears only when the run produced the counter, which is to say only on a patched build.
+The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead. A **patched build adds a third, `NET (CVA6)`**.
 
 ### What a patched build adds
 
 `MinorCPU_CVA6.patch` puts two mechanisms in the trace that a stock build has no counterpart for, and the viewer draws both.
 
-**Store-collision hold.** CVA6 has no store-to-load forwarding, so a load whose address collides with a pending store waits in the load-store queue for the store buffer to drain, then pays a restart penalty before presenting its request again. The two together fill the gap between `memPush` and `memIssue`, which is blank without them, and appear as `st coll` and `replay` strips with their own legend entries. On `store_fwd` one load waits nine cycles and replays for two.
+**Store-collision hold.** CVA6 has no store-to-load forwarding, so a load whose address collides with a pending store waits in the load-store queue for the store buffer to drain, then pays a restart penalty before presenting its request again. The two together fill the gap between `memPush` and `memIssue`, which is blank without them, and appear as `st coll` and `replay` strips with their own legend entries. On `store_fwd` 73 loads are held this way.
 
-**Data-cache blocking.** The `D$ blocked` toggle tints every cycle column in which the cache held the CPU side off. Stock gem5 blocks for MSHRs, targets and writeback buffers; the patch adds the dirty-victim readout, the fence flush and the refill window, and on daxpy those dominate at 1,308 blocks against 19. Blocking is a property of the cache rather than of any one instruction, so it draws as a band across every row, like the stall highlight.
+**Data-cache holds.** The `D$ held` toggle tints every cycle column in which the cache held a request off. Holding is a property of the cache rather than of any one instruction, so it draws as a band across every row, like the stall highlight.
+
+The patch offers two forms and they are exclusive. Blocking refuses the port, for stock causes such as MSHRs and targets and for the patch's dirty-victim readout, fence flush and refill window. Accept-and-charge, which the production configuration uses, takes the request and charges it the window instead. The band covers both, so it reads the same either way.
 
 **Return address stack.** `run_gem5.py` now enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them.
 
