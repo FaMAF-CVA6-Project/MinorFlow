@@ -100,7 +100,7 @@ OVERHEAD_PROFILES = {
 METRICS_MAP = {
     "numCycles":         r"cores\.core\.numCycles",
     "numInsts":          r"cores\.core\.commitStats0\.numInsts\s",
-    "icache_miss":       r"l1icaches\.overallMisses::total",
+    "icache_miss":       r"l1icaches\.overallMshrMisses::total",
     "dcache_miss":       r"l1dcaches\.overallMshrMisses::total",
     "icache_access":     r"l1icaches\.overallAccesses::total",
     "dcache_access":     r"l1dcaches\.overallAccesses::total",
