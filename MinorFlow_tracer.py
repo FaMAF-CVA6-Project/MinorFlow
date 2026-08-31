@@ -60,10 +60,12 @@ RE_COMMIT = re.compile(
     r'T0\s+:\s+(0x[0-9a-f]+)([^:]*?):\s+(.+?)\s+:\s+(\w+)'
     r'(?:.*?FetchSeq=(\d+))?')
 RE_COMMIT_UPC = re.compile(r'\.\s*(\d+)\s*$')
+RE_COMMIT_SYM = re.compile(r'@(\S+?)(?:\+(\d+))?\s*$')
 RE_COMMITSTALL = re.compile(
     r'Not committing inst:\s+\d+/\S+/(\d+)/(\d+)\.(\d+).*?'
     r'stalled for (\d+) more cycles')
 RE_DCCOALESCE = re.compile(r'l1dcaches: \w+ coalescing MSHR for ')
+RE_ICCOALESCE = re.compile(r'l1icaches: \w+ coalescing MSHR for ')
 
 # Added by MinorCPU_CVA6.patch. A colliding load waits in the LSQ while the
 # store buffer drains, then pays a restart penalty. Neither line names its
@@ -83,7 +85,8 @@ RE_LSQ_HELD = re.compile(
 RE_CACHEBLOCK = re.compile(
     r'(l1[id]caches): (Blocking|Unblocking) for cause (\d+)')
 
-# Return address stack. push and pop are stock and carry the depth; drop is the
+# Return address stack. push and pop are stock and carry the depth, while drop
+# is the
 # path rasNoRecovery takes on a squash, leaving the speculative push or pop in
 # place instead of undoing it.
 RE_RAS_PUSH = re.compile(r'ras: push: RAS\[\d+\] <= \S+\. Entries used: (\d+)')
@@ -236,6 +239,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     storebuf_events = {}  # fetchSeq -> {pushCycle, deleteCycle}
     ic_miss_cycles = set()
     ic_hit_cycles = set()
+    ic_miss_log = []
+    ic_hit_log = []
     dcache_by_cycle = {}  # cycle -> {miss, isWrite, coalesced}
     collision_wait = {}   # fetchSeq -> [cycles held by a store collision]
     collision_replay = {}  # fetchSeq -> [cycles of the restart penalty]
@@ -256,6 +261,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     # execSeq, so a stall on either micro-op of a split macro-op lands on the
     # single record that macro-op produces.
     exmin_map = {}
+    # symbol name -> lowest base address, harvested from the exec trace.
+    sym_base = {}
     observed_line_size = [None]   # boxed so inner assignment is visible
     branch_pred_info = {}
 
@@ -320,7 +327,23 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
 
         m = RE_ICACHE.search(l)
         if m:
-            (ic_miss_cycles if m.group(1) == 'miss' else ic_hit_cycles).add(cycle)
+            if m.group(1) == 'miss':
+                ic_miss_cycles.add(cycle)
+                ic_miss_log.append([cycle, False])   # [cycle, coalesced]
+            else:
+                ic_hit_cycles.add(cycle)
+                ic_hit_log.append(cycle)
+            continue
+
+        if RE_ICCOALESCE.search(l):
+            # Printed in the same tick, straight after the access it belongs to,
+            # so it marks the most recent unmarked miss of this cycle.
+            for e in reversed(ic_miss_log):
+                if e[0] != cycle:
+                    break
+                if not e[1]:
+                    e[1] = True
+                    break
             continue
 
         m = RE_DCACHE.search(l)
@@ -354,7 +377,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             continue
 
         # The RAS names no instruction. A push or a pop belongs to the call or
-        # return fetch2 saw this cycle; a drop belongs to the instruction whose
+        # return fetch2 saw this cycle, and a drop belongs to the instruction whose
         # squash discarded it. Anything with no anchor still counts globally.
         if 'ras: ' in l:
             m = RE_RAS_PUSH.search(l) or RE_RAS_POP.search(l)
@@ -536,6 +559,14 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         if 'T0' in l:
             m = RE_COMMIT.search(l)
             if m:
+                sym = RE_COMMIT_SYM.search(m.group(2).strip())
+                if sym:
+                    base = int(m.group(1), 16) - int(sym.group(2) or 0)
+                    # Lowest base wins if a name is ever seen with inconsistent
+                    # deltas, so a symbol cannot drift upwards through the file.
+                    prev = sym_base.get(sym.group(1))
+                    if prev is None or base < prev:
+                        sym_base[sym.group(1)] = base
                 upc = RE_COMMIT_UPC.search(m.group(2))
                 commit_list.append({
                     'cycle': cycle, 'pc': m.group(1),
@@ -801,21 +832,21 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     if has_minor_execute[0] and records:
         enrich_by_pc = {}
         for cm in commit_list:
-            enrich_by_pc.setdefault(cm['pc'], []).append(
-                {'instr': cm['instr'], 'fu': cm['fu']})
-        enrich_used = {}
+            enrich_by_pc.setdefault(
+                cm['pc'], {'instr': cm['instr'], 'fu': cm['fu']})
         for rec in records:
-            lst = enrich_by_pc.get(rec['pc'], [])
-            ui = enrich_used.get(rec['pc'], 0)
-            if ui < len(lst):
-                rec['instr'] = lst[ui]['instr']
-                rec['fu'] = lst[ui]['fu']
-                rec['compressed'] = bool(
-                    RE_COMPRESSED.match(rec['instr'] or ''))
-                enrich_used[rec['pc']] = ui + 1
+            e = enrich_by_pc.get(rec['pc'])
+            if e is None or not e['instr']:
+                continue
+            rec['instr'] = e['instr']
+            rec['fu'] = e['fu']
+            rec['compressed'] = bool(
+                RE_COMPRESSED.match(rec['instr'] or ''))
 
-    ic_access_cycles = sorted(ic_hit_cycles | ic_miss_cycles)
-    ic_miss_arr = sorted(ic_miss_cycles)
+    # Accesses count every access, matching overallAccesses. Misses count only
+    # those that opened an MSHR, matching overallMshrMisses.
+    ic_access_cycles = sorted(ic_hit_log + [e[0] for e in ic_miss_log])
+    ic_miss_arr = sorted(e[0] for e in ic_miss_log if not e[1])
 
     # Counted from the access log, since per-instruction attribution misses
     # store writebacks that retire after commit. Cycles carry multiplicity, a
@@ -846,6 +877,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'observed_line_size': line_size,
         },
         'config_params': branch_pred_info,
+        # Sorted base/name pairs, so the viewer can resolve a branch target to
+        # the symbol containing it without carrying the whole map per record.
+        'symbols': sorted(([b, n] for n, b in sym_base.items()),
+                          key=lambda e: e[0]),
         'ic_events': {
             'access_cycles': ic_access_cycles,
             'miss_cycles': ic_miss_arr,
