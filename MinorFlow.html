@@ -887,7 +887,7 @@
     <label class="chk"
       title="Tint every cycle column in which the data cache held a request off, whether by refusing the port or by accepting it and charging the window. Machine-wide rather than per instruction, so it draws across every row.">
       <input type="checkbox" id="blk-on" onchange="redraw()">
-      D$ Held
+      DCache Held
     </label>
 
     <span class="vsep">│</span>
@@ -1008,18 +1008,18 @@
     <span title="Instructions whose fetch spanned two cache lines in this window.">Wrap: <span class="hi"
         id="s-wrp">-</span></span>
     <span
-      title="ICache miss cycles in the visible window, matching gem5 overallMisses. The number in parentheses, when shown, is the subset from instruction records.">IC✗<sup
+      title="ICache miss cycles in the visible window, matching gem5 overallMisses. The number in parentheses, when shown, is the subset from instruction records.">ICache✗<sup
         style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-icm">-</span></span>
     <span
-      title="Data-cache miss cycles in the visible window, matching gem5 stats. The number in parentheses is the load and store split, which sums to the total.">DC✗<sup
+      title="Data-cache miss cycles in the visible window, matching gem5 stats. The number in parentheses is the load and store split, which sums to the total.">DCache✗<sup
         style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-dcm">-</span></span>
     <span
-      title="ICache access cycles in the visible window (gem5 l1icaches accesses). The number in parentheses, when shown, is the record subset.">I$
+      title="ICache access cycles in the visible window (gem5 l1icaches accesses). The number in parentheses, when shown, is the record subset.">ICache
       acc<sup style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-ica">-</span></span>
-    <span title="Data-cache access cycles in the visible window, split into loads and stores.">D$ acc<sup
+    <span title="Data-cache access cycles in the visible window, split into loads and stores.">DCache acc<sup
         style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-dca">-</span></span>
     <span
@@ -1131,7 +1131,7 @@
         desc: 'Full refill bubble after a mispredict redirect from Execute (the predictor fired but called the wrong direction or target). Its depth is the measured redirect-to-target-fetch gap.',
       },
       refillmiss: {
-        legendKey: 'bubMiss', label: 'Bubble: refill + I$ miss',
+        legendKey: 'bubMiss', label: 'Bubble: refill + ICache miss',
         swatch: 'rgb(224,72,72)', fill: 'rgba(224,72,72,0.58)',
         txt: '<span style="color:#e05050">refill + ICache miss on the speculative target</span>',
         desc: 'Late-redirect refill that also waited on the speculative wrong-path target missing the ICache. The largest of the bubbles.',
@@ -3633,7 +3633,7 @@
       const dcLoadSet = new Set();             // distinct memIssue cycles where dcMiss=true and not a store
       const dcStoreSet = new Set();             // distinct memIssue cycles where dcMiss=true and isStore
       /* Cycles holding a Fetch1 request (f1req, plus f1reqB on wraps). Fallback
-       * for I$ acc when the trace had no l1icaches: access lines. */
+       * for ICache acc when the trace had no l1icaches: access lines. */
       const fetchReqSet = new Set();
       for (const i of vis) {
         if (i.flushed) nFlush++;
@@ -4567,7 +4567,7 @@
         const tag = isTop === null ? '' : (hi ? ' hi' : ' lo');
         const reqL = `fe1${tag} req`;
         const respL = `fe1${tag} resp`;
-        const stallL = `i$${tag} stall`;
+        const stallL = `icache${tag} stall`;
         /* isTop null means this instruction needs only one line, so its lane is
          * the whole row. */
         const band = (c0, c1, color, label) => {
@@ -4836,7 +4836,7 @@
         taken: 'predicted-taken steering',
         unpred: 'unpredicted refill',
         refill: 'mispredict refill',
-        refillmiss: 'refill + I$ miss',
+        refillmiss: 'refill + ICache miss',
         serialize: 'serialize flush',
       };
       const bubColor = {
@@ -4912,7 +4912,7 @@
         }
       }
 
-      /* A load's D$ miss stalls the in-order pipeline while the fill is in flight,
+      /* A load's DCache miss stalls the in-order pipeline while the fill is in flight,
        * so it feeds Total stall (unlike a store's). The tracer only sets isStore on
        * stores, loads carry null, hence the isStore !== true test. */
       /* Two, not one. memIssue is the access, drawn as the miss cell, and
@@ -4931,7 +4931,7 @@
       const totalStallRow = `<tr><td style="padding-top:2px;color:#909090;font-weight:500">Total stall</td>` +
         `<td style="padding-top:2px;color:${totalStallColor};font-weight:500">${totalStall}c${tsCtx}</td></tr>`;
 
-      /* A store's D$ miss is serviced after commit (the writeback drains from the
+      /* A store's DCache miss is serviced after commit (the writeback drains from the
        * store path), so it never stalls the pipeline: shown for reference, kept OUT
        * of Total stall and of every metric-bar stall. */
       const storeDcStall = (ins.isStore === true && ins.dcMiss === true
@@ -4945,7 +4945,7 @@
          * windows (not their sum) and is what feeds Total stall. */
         let icStallRows = '';
         if (icStall) {
-          icStallRows = stallRow('IC stall', icStall, colorizeWait(icStall, pipelineStats.icStall), maxNote(pipelineStats.icStall));
+          icStallRows = stallRow('ICache stall', icStall, colorizeWait(icStall, pipelineStats.icStall), maxNote(pipelineStats.icStall));
           if (ins.wrapsLine && ins.f1reqA !== null) {
             const loS = (ins.f1respA != null && ins.icMissA) ? Math.max(0, ins.f1respA - ins.f1reqA - 1) : 0;
             const hiS = (ins.f1respB != null && ins.f1reqB != null && ins.icMissB) ? Math.max(0, ins.f1respB - ins.f1reqB - 1) : 0;
