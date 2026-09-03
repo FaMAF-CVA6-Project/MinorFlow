@@ -63,7 +63,19 @@ SEP = "=" * 70
 # What the runner writes above its metrics table, and where the sweep gathers
 # every one of those tables once the runs are done.
 METRICS_MARKER = "RESULTS TABLE"
-METRICS_FILE = "metrics.txt"
+
+
+def slug(text, limit=40):
+    """Turn a value into something safe for a file name: word characters and
+    single dashes, trimmed."""
+    out = re.sub(r"[^A-Za-z0-9]+", "-", str(text)).strip("-")
+    return out[:limit].strip("-")
+
+
+def metrics_filename(parts):
+    """The gathered metrics file, named after the run that produced it."""
+    tags = [slug(p) for p in parts if p]
+    return "metrics" + ("_" if tags else "") + "_".join(tags) + ".txt"
 
 
 def find_beside_script(name, what, extra=()):
@@ -372,7 +384,7 @@ def extract_metrics(report_path):
     return None
 
 
-def write_metrics_file(out_dir, entries, info):
+def write_metrics_file(out_dir, entries, info, filename):
     """Gather every run's metrics table into one metrics.txt. entries is
     [(label, report file)] in plan order, so the file reads like the summary
     above it. A run with no table is named, not skipped."""
@@ -387,10 +399,10 @@ def write_metrics_file(out_dir, entries, info):
     if missing:
         print(f"[WARN] No metrics table for: {', '.join(missing)}")
     if not blocks:
-        print(f"[WARN] No metrics tables found, so no {METRICS_FILE} written")
+        print(f"[WARN] No metrics tables found, so no {filename} written")
         return None
 
-    path = os.path.join(out_dir, METRICS_FILE)
+    path = os.path.join(out_dir, filename)
     try:
         with open(path, "w") as f:
             f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
@@ -495,10 +507,22 @@ def main():
     parser.add_argument("--no-trace", action="store_true",
                         help="Forwarded to run_gem5.py: no debug trace, "
                              "metrics only")
+    parser.add_argument("--suite", choices=["config", "viewer"], default=None,
+                        help="Forwarded to run_gem5.py: which overhead table "
+                             "to subtract. Defaults to the one run_gem5.py "
+                             "picks from where it sits, 'viewer' here")
+    parser.add_argument("--variant", choices=["patch", "stock"],
+                        default="stock",
+                        help="Forwarded to run_gem5.py: which build to run "
+                             "and whose overhead profile to subtract. This "
+                             "sweep is a stock-gem5 one, so 'stock'")
     parser.add_argument("--build", default=None, metavar="NAME",
                         help="Forwarded to run_gem5.py: which build to run, "
                              "by directory name under build/, a path to one, "
                              "or a path to the binary")
+    parser.add_argument("--skip-build-check", action="store_true",
+                        help="Forwarded to run_gem5.py: run even when the "
+                             "build does not match --variant")
     parser.add_argument("--list", action="store_true",
                         help="Print the plan and exit, touching nothing")
     own_argv, after_separator = split_own_args(sys.argv[1:])
@@ -594,6 +618,8 @@ def main():
     sweep_start = time.time()
 
     def run_one(index, total, config_id, config_copy, path):
+        if stop.is_set():
+            return
         test_name = os.path.splitext(os.path.basename(path))[0]
         label = f"{LABEL}{config_id}_{test_name}"
         job_gem5_out, job_results = job_dirs(runner, label)
@@ -605,8 +631,13 @@ def main():
                "--results-dir", job_results]
         if args.no_trace:
             cmd.append("--no-trace")
+        if args.suite:
+            cmd.extend(["--suite", args.suite])
+        cmd.extend(["--variant", args.variant])
         if args.build:
             cmd.extend(["--build", args.build])
+        if args.skip_build_check:
+            cmd.append("--skip-build-check")
         # After a '--', so run_gem5.py hands them to the configuration whatever
         # they are named.
         if config_args:
@@ -649,6 +680,8 @@ def main():
                 discard_run(job_gem5_out, job_results)
             results.append((index, config_id, test_name, code, elapsed))
 
+    stop = threading.Event()
+    pool = None
     try:
         # One copy of the configuration per id, each with its selector set.
         queue = []
@@ -666,16 +699,22 @@ def main():
             print(f"[INFO] Running {jobs} at a time.\n")
         if jobs == 1:
             for index, (cid, copy, path) in enumerate(queue, 1):
+                if stop.is_set():
+                    break
                 run_one(index, total, cid, copy, path)
         else:
-            with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
-                for future in [pool.submit(run_one, i, total, cid, copy, path)
-                               for i, (cid, copy, path)
-                               in enumerate(queue, 1)]:
-                    future.result()
+            pool = concurrent.futures.ThreadPoolExecutor(jobs)
+            futures = [pool.submit(run_one, i, total, cid, copy, path)
+                       for i, (cid, copy, path) in enumerate(queue, 1)]
+            for future in futures:
+                future.result()
     except KeyboardInterrupt:
-        print("\n[WARN] Interrupted. Stopping the sweep.")
+        stop.set()
+        print("\n[WARN] Interrupted. Cancelling the runs that have not "
+              "started. The ones already running finish first.")
     finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
         shutil.rmtree(config_dir, ignore_errors=True)
 
     # Report in plan order, not the order the runs finished.
@@ -690,9 +729,15 @@ def main():
           os.path.join(out_dir, f"{name}_report.{LABEL}{cid}.txt"))
          for cid, name, code, _ in ordered if code == 0],
         [f"Config   : {base_name}",
+         f"Variant  : {args.variant}",
+         f"Build    : {args.build or '(from --variant)'}"
+         + ("  [--skip-build-check]" if args.skip_build_check else ""),
+         f"Suite    : {args.suite or '(run_gem5.py default)'}",
          f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
          f"Tests dir: {os.path.abspath(args.tests_dir)}",
-         f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"])
+         f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"],
+        metrics_filename([os.path.splitext(base_name)[0], args.variant,
+                          args.build, args.suite, " ".join(config_args)]))
 
     print(f"[INFO] Results in {out_dir}")
     if failed:
