@@ -15,7 +15,7 @@ MinorFlow turns that trace into a picture. Each row is an instruction, each cell
 Capture a trace from gem5:
 
 ```bash
-gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
+gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS \
          --debug-file=trace.txt \
          gem5_config_MinorFlow.py <binary>
 ```
@@ -34,12 +34,22 @@ python3 MinorFlow_tracer.py run_results/daxpy_trace.txt -o trace.json
 
 Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window. There is nothing to install and nothing to serve. The viewer is a single self-contained HTML file with no dependencies.
 
-The landing page also offers a sample trace. It is not committed, because of its size. Generate one at `tests/daxpy.config1.json`, or at `tests/daxpy.config1.js` wrapping it as `window.__SAMPLE_TRACE__ = {...}` for `file://` use.
+`RAS` is in that flag list because the return-address-stack markers come from it, and it is off by default in gem5. Without it the trace parses fine and the RAS push, pop and drop markers are simply absent. The tracer says so when it notices.
+
+### The sample trace
+
+The landing page offers a sample, and the button appears only when the sample is actually there, so it is never a dead end. It is not committed by default, because of its size. `make_sample.py` trims a full tracer JSON down to one:
+
+```bash
+python3 make_sample.py daxpy.json                 # -> tests/daxpy.config1.{json,js}
+python3 make_sample.py daxpy.json -n 1500         # fewer instructions
+python3 make_sample.py daxpy.json --from 4000     # start past the set-up
+```
 
 ## Tracer options
 
 ```bash
-python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet]
+python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet] [--tpc TICKS]
 ```
 
 | Option | Meaning |
@@ -48,8 +58,11 @@ python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet]
 | `-o`, `--out` | Output JSON path. Defaults to `<trace>.json` |
 | `--stats` | Print a summary of committed and flushed instructions plus instruction-cache activity |
 | `--quiet` | Suppress the progress output |
+| `--tpc` | Ticks per CPU cycle, skipping the detection pass. 20000 at 50 MHz on gem5's default tick rate |
 
-If the tracer parses zero instructions it will tell you so, which almost always means the trace was captured without the Minor debug flags.
+The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds the records. Pass 1 stops once it has seen enough distinct ticks to settle the answer, so it costs a fraction of the file rather than all of it, and `--tpc` skips it entirely when the clock is already known.
+
+`tests/MinorFlow_create_all_jsons.py` converts a whole folder of traces at once, skipping the ones whose JSON is already newer, and lets the tracer's progress line through so a multi-gigabyte conversion does not look hung.
 
 ## Running a test: `run_gem5.py`
 
@@ -85,17 +98,21 @@ The test is compiled into the gem5 output folder rather than beside the source, 
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead. A **patched build adds a third, `NET (CVA6)`**.
 
+Which overhead table it subtracts is `--suite`. This repository's benchmarks and the CVA6 fork's calibration benchmarks use different test templates, so their scaffolding costs differ, and `run_gem5.py` is one file carrying both tables. It picks `viewer` here and `config` there from where it sits, prints the choice, and `--suite` overrides it.
+
 ### What a patched build adds
 
 `MinorCPU_CVA6.patch` puts two mechanisms in the trace that a stock build has no counterpart for, and the viewer draws both.
 
 **Store-collision hold.** CVA6 has no store-to-load forwarding, so a load whose address collides with a pending store waits in the load-store queue for the store buffer to drain, then pays a restart penalty before presenting its request again. The two together fill the gap between `memPush` and `memIssue`, which is blank without them, and appear as `st coll` and `replay` strips with their own legend entries. On `store_fwd` 73 loads are held this way.
 
-**Data-cache holds.** The `D$ held` toggle tints every cycle column in which the cache held a request off. Holding is a property of the cache rather than of any one instruction, so it draws as a band across every row, like the stall highlight.
+**Cache holds.** The `DCache Held` and `ICache Held` toggles tint every cycle column in which that cache held a request off. Holding is a property of the cache rather than of any one instruction, so each draws as a band across every row, like the stall highlight. A toggle whose trace carries no spans is disabled and says why, so an empty result cannot be mistaken for a broken control.
 
-The patch offers two forms and they are exclusive. Blocking refuses the port, for stock causes such as MSHRs and targets and for the patch's dirty-victim readout, fence flush and refill window. Accept-and-charge, which the production configuration uses, takes the request and charges it the window instead. The band covers both, so it reads the same either way.
+There are two forms, and accept-and-charge replaces blocking for **two causes only**: the dirty-victim readout and the refill window. Everything else still blocks under either form, so a single run usually shows both.
 
-**Return address stack.** `run_gem5.py` now enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them.
+**Return address stack.** `run_gem5.py` enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them. A squash that leaves a speculative push or pop standing, which is what `rasNoRecovery` transcribes, is marked `ras!`.
+
+The **Extra Info** panel adds a *Return address stack* section with the whole-trace picture the per-instruction markers cannot give: pushes and pops, the deepest the stack reached against its capacity, the depth left at the end, and how many operations squashes left unrepaired. A depth well above zero at the end on a balanced program is the signature of that last figure.
 
 A configuration script may define options of its own. Any flag `run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
 
@@ -153,7 +170,7 @@ python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME
 
 For each configuration it sets `TEST` and runs that entry's workloads through [`run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
-Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_report.config<N>.txt`, `<test>_stats.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from. Every metrics table is also gathered into one `metrics.txt` in that folder, labelled by configuration and test, so the whole sweep can be read without opening a file per run.
+Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_report.config<N>.txt`, `<test>_stats.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from. Every metrics table is also gathered into one file in that folder, named after the run that produced it.
 
 Each run works in its own folder under `m5out/` and `run_results/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `run_gem5.py` run writes into them too.
 
@@ -214,7 +231,7 @@ Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen 
 The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 1 in the paper: 100 MHz, a 16 KiB 4-way L1I and a 32 KiB 8-way L1D at one-cycle hit, a 1024-entry local branch predictor with a 256-entry BTB and a 16-entry RAS. Run it the same way as any other config:
 
 ```bash
-gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback \
+gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS \
          --debug-file=trace.txt \
          gem5_config_Reference_Core.py <binary>
 ```
@@ -231,11 +248,13 @@ Both come out of an undergraduate thesis at FaMAF, Universidad Nacional de Córd
 
 ## Cleaning up
 
-`clean_repo.py` deletes what a run leaves in this repository: every `.list` and gem5 debug trace, and every `__pycache__`. A `.vcd` or `.fst` belongs to the Verilator side and is never touched.
+`clean_MinorFlow_repo.py` deletes what a run leaves in this repository: every `.list`, `.vcd`, `.fst` and gem5 debug trace, and every `__pycache__`.
 
 ```bash
-python3 clean_repo.py [-y] [--dry-run] [-v]
+python3 clean_MinorFlow_repo.py [-y] [--dry-run] [-v]
 ```
+
+`clean_gem5_runs.py` is the other one, and clears a gem5 tree rather than this repository: `m5out/`, `batch_results/`, the sweep result folders and the `run_results/` beside each runner. The names say which tree each one touches.
 
 It lists what it found with its size and asks before deleting. The viewer JSONs are left alone and `docs/` is kept whole, since the CARLA 2026 daxpy validation under it is the evidence behind the paper.
 
