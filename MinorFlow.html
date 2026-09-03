@@ -884,10 +884,16 @@
       Stalls
     </label>
 
-    <label class="chk"
+    <label class="chk" id="blk-lbl"
       title="Tint every cycle column in which the data cache held a request off, whether by refusing the port or by accepting it and charging the window. Machine-wide rather than per instruction, so it draws across every row.">
       <input type="checkbox" id="blk-on" onchange="redraw()">
       DCache Held
+    </label>
+
+    <label class="chk" id="iblk-lbl"
+      title="Tint every cycle column in which the instruction cache held a request off. On this configuration that is nearly always no_mshrs: Fetch1 asked for a line while a miss was still outstanding and the port refused it. Machine-wide rather than per instruction, so it draws across every row.">
+      <input type="checkbox" id="iblk-on" onchange="redraw()">
+      ICache Held
     </label>
 
     <span class="vsep">│</span>
@@ -897,7 +903,8 @@
 
     <span class="vsep">│</span>
     <button class="tbtn" onclick="toggleConfigPanel()"
-      title="Show the pipeline configuration and aggregate statistics inferred from this trace.">⚙ Config</button>
+      title="Configuration inferred from the whole trace, and statistics for the current fetch range.">⚙ Extra
+      Info</button>
   </div>
 
   <!-- ════════════════════════════ INFERRED CONFIG MODAL ═════════════════════ -->
@@ -905,15 +912,17 @@
     <div id="cfg-modal">
       <div id="cfg-modal-head">
         <div>
-          <h2>Inferred configuration</h2>
-          <div class="sub">Best-effort estimates derived from the <strong>full trace</strong>, not the currently
-            filtered fetch-number range. Some values are exact. Others are observed lower bounds, since the trace may
-            not exercise the full configured limit.</div>
+          <h2>Extra Info</h2>
+          <div class="sub">Two kinds of thing, in this order. The <strong>configuration</strong> sections come
+            first and describe the whole JSON, because a configuration does not change with the window and the
+            inferences are lower bounds that need every sample. <strong>Everything from Statistics downwards
+              describes the current fetch range only</strong>, so those figures move when the range does, and the
+            statistics are the same ones the metric bar shows.</div>
         </div>
         <button id="cfg-close" onclick="toggleConfigPanel()" title="Close">×</button>
       </div>
       <div id="cfg-body">
-        <p style="color:var(--text3);font-size:11px">Load a trace to populate this panel.</p>
+        <p style="color:var(--text3);font-size:11px">Load a JSON to populate this panel.</p>
       </div>
     </div>
   </div>
@@ -1008,18 +1017,18 @@
     <span title="Instructions whose fetch spanned two cache lines in this window.">Wrap: <span class="hi"
         id="s-wrp">-</span></span>
     <span
-      title="ICache miss cycles in the visible window, matching gem5 overallMisses. The number in parentheses, when shown, is the subset from instruction records.">ICache✗<sup
-        style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
+      title="ICache miss cycles in the visible window, matching gem5 overallMisses. The number in parentheses, when shown, is the subset from instruction records.">ICache
+      Miss<sup style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-icm">-</span></span>
     <span
-      title="Data-cache miss cycles in the visible window, matching gem5 stats. The number in parentheses is the load and store split, which sums to the total.">DCache✗<sup
-        style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
+      title="Data-cache miss cycles in the visible window, matching gem5 stats. The number in parentheses is the load and store split, which sums to the total.">DCache
+      Miss<sup style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-dcm">-</span></span>
     <span
       title="ICache access cycles in the visible window (gem5 l1icaches accesses). The number in parentheses, when shown, is the record subset.">ICache
-      acc<sup style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
+      Acc<sup style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-ica">-</span></span>
-    <span title="Data-cache access cycles in the visible window, split into loads and stores.">DCache acc<sup
+    <span title="Data-cache access cycles in the visible window, split into loads and stores.">DCache Acc<sup
         style="font-size:.7em;opacity:.55" title="cycle-window scoped">cyc</sup>: <span class="hi"
         id="s-dca">-</span></span>
     <span
@@ -1037,7 +1046,7 @@
       title="Flush recovery cycles: the bubble and pre-fetch wait on the instruction resuming after a mispredict, an unpredicted branch, or a serialize drain. The executeBranchDelay on a mispredict or unpredicted-branch resume is excluded (it is an inherent pipeline delay, drawn as its own Branch delay cell).">FlushSt:
       <span class="hi" id="s-stall-flush">-</span></span>
     <span
-      title="Fetch stall cycles: the front-end cannot issue a fetch because every in-flight fetch is outstanding, the Fetch2 or Decode input buffer is full, the high line of a line-spanning fetch is waiting for its slot, or a correctly predicted taken branch left a steering bubble.">FetchSt:
+      title="Fetch stall cycles: the front end could not issue or deliver a fetch. Covers the instruction-cache wait (miss and retry), a full Fetch2 or Decode input buffer, the high line of a line-spanning fetch waiting for its slot, and a steering bubble after a correctly predicted taken branch.">FetchSt:
       <span class="hi" id="s-stall-fetch">-</span></span>
     <span
       title="Execute-side stall cycles: the exec-buffer pre-issue wait, the LSQ hazard on memory ops (a load waiting between dispatch and memory issue, and a store waiting to enter the LSQ when the requests queue is saturated), and the Producer hazard (a consumer waiting on a non-memory producer). The Memory hazard (a consumer waiting on a load result) is the separate DMemSt.">DataSt:
@@ -1097,10 +1106,11 @@
        * the return that touched the stack, and rasDrop is the squash that left
        * the speculative op standing, which only rasNoRecovery does. */
       rasPush: '#2a7a5a', rasPop: '#2a6a8a', rasDrop: '#c05020',
-      /* Cycles the data cache held a request off, by blocking the port or by
-       * charging the window. Machine-wide rather than per instruction, so it
-       * draws as a column band like the stall highlight. */
-      cacheBlk: '#7a4a2a',
+      /* Cycles a cache held a request off, by blocking the port or by
+       * charging the window.*/
+      dcacheBlk: '210,130,70',
+      icacheBlk: '90,150,205',
+      stallBand: '120,150,210',
       flushed: '#3a1515',  // dimmed red used for everything on a flushed instruction
       /* Forwarding into a flushed consumer. The flushed stage colour itself is
        * near the background by design, which makes a two-pixel line on it
@@ -1207,16 +1217,27 @@
      * for stats.txt-equivalent access/miss counts. */
     let icAccessCycles = []; // every l1icaches: access (hit OR miss)
     let icMissCyclesArr = []; // only the miss subset
+
+    /* A hit that was retried into a fill still landing. gem5 blocks the ICache
+     * port while a miss is outstanding, so Fetch1's next request is refused and
+     * re-issued the cycle the port reopens. */
+    function icacheRetriedHit(rq, rs, observed) {
+      return observed === true && rq != null && rs != null && rs > rq + 1;
+    }
     /* Data-cache events from the access log, counted directly rather than
      * per-instruction so store writebacks are included. dcEventsPresent is false
      * for traces parsed before dc_events. */
     let dcAccessCycles = [], dcMissCyclesArr = [], dcStoreAccessCyclesArr = [], dcStoreMissCyclesArr = [];
-    /* {cause name: [[startCycle, endCycle], ...]} from the patch's blocking
-     * causes. Empty for a trace from a stock build, which never emits them. */
-    let dcBlockedSpans = {};
-    /* The accept-and-charge form of the same mechanisms. The two never appear
-     * together: one blocks the port, the other charges the request. */
-    let dcChargeSpans = {};
+    /* {cause name: [[startCycle, endCycle], ...]} from the cache's blocking
+     * causes. no_mshrs is stock; the rest arrive only from a patched build. */
+    let dcBlockedSpans = {}, icBlockedSpans = {};
+    /* The accept-and-charge form of the readout and refill windows. It replaces
+     * causes 3 and 5 only, so a run carries both kinds of span: the I-side
+     * no_mshrs blocks sit beside the D-side window charges. */
+    let dcChargeSpans = {}, icChargeSpans = {};
+    /* Return address stack activity: [[cycle, entriesUsed], ...] after each
+     * push or pop, and the cycles a squash left a speculative op standing. */
+    let rasDepth = [], rasDropCycles = [];
     /* Misses that allocated an MSHR rather than coalescing into one. This is
      * the figure run_gem5.py reports as the D-cache miss count
      * (l1dcaches.overallMshrMisses::total). Absent on older JSONs. */
@@ -1269,22 +1290,45 @@
     /* Row height scales with zoom so labels stay legible. */
     function getRowH() { return cellW >= 40 ? 26 : cellW >= 20 ? 20 : 15; }
 
-    /* Per-instruction wait quantities shared by computePipelineStats() and the tooltip.
-     * icStall counts MISS fill cycles only. The one-cycle Fetch1 hit latency is
-     * the stage's intrinsic access time, not a stall. */
-    /* Union of the instruction's line miss windows. NOT f1 - f1req - 1, which would
-     * also count the high request cell and the front-end gap between the two lines. */
+    /* Per-instruction wait quantities shared by computePipelineStats() and the
+     * tooltip.*/
+    function icStallIntervals(ins) {
+      if (ins.f1req == null || ins.f1 == null) return [];
+      const ivs = [];
+      const add = (missed, rq, rs, retried) => {
+        if (rq == null || rs == null || rs <= rq + 1) return;
+        if (missed === true) ivs.push([rq + 1, rs]);
+        else if (icacheRetriedHit(rq, rs, retried)) ivs.push([rq + 1, rs]);
+      };
+      if (ins.wrapsLine) {
+        add(ins.icMissA, ins.f1reqA, ins.f1respA, ins.icRetryA);
+        add(ins.icMissB, ins.f1reqB, ins.f1respB, ins.icRetryB);
+      } else {
+        add(ins.icMiss, ins.f1req, ins.f1, ins.icRetry);
+      }
+      return ivs;
+    }
+    /* Per line, with why it stalled, so the tooltip can name both halves of a
+     * line-spanning fetch and say which is a miss and which a retry.*/
+    function icStallBreakdown(ins) {
+      const out = [];
+      const add = (label, missed, retried, rq, rs) => {
+        if (rq == null || rs == null || rs <= rq + 1) return;
+        const cause = (missed === true) ? 'miss'
+          : (icacheRetriedHit(rq, rs, retried) ? 'retry' : null);
+        if (cause) out.push({ label, cycles: rs - rq - 1, cause });
+      };
+      if (ins.wrapsLine) {
+        add('Low line', ins.icMissA, ins.icRetryA, ins.f1reqA, ins.f1respA);
+        add('High line', ins.icMissB, ins.icRetryB, ins.f1reqB, ins.f1respB);
+      } else {
+        add('', ins.icMiss, ins.icRetry, ins.f1req, ins.f1);
+      }
+      return out;
+    }
     function icMissStallTotal(ins) {
       if (ins.f1req == null || ins.f1 == null) return null;
-      const ivs = [];
-      if (ins.wrapsLine) {
-        if (ins.icMissA === true && ins.f1reqA != null && ins.f1respA != null && ins.f1respA > ins.f1reqA + 1)
-          ivs.push([ins.f1reqA + 1, ins.f1respA]);
-        if (ins.icMissB === true && ins.f1reqB != null && ins.f1respB != null && ins.f1respB > ins.f1reqB + 1)
-          ivs.push([ins.f1reqB + 1, ins.f1respB]);
-      } else if (ins.icMiss === true && ins.f1 > ins.f1req + 1) {
-        ivs.push([ins.f1req + 1, ins.f1]);
-      }
+      const ivs = icStallIntervals(ins);
       if (!ivs.length) return 0;
       ivs.sort((a, b) => a[0] - b[0]);
       let total = 0, cs = ivs[0][0], ce = ivs[0][1];
@@ -1320,10 +1364,7 @@
       return {
         icStall: icMissStallTotal(ins),
         /* High line wait: the slot was free and the high-line request had not
-         * gone out. Uses wrapSlotFreeCycle, the one rule the strip, the stall
-         * classifier and the stage indicator all read, so the tooltip figure is
-         * the length of the band actually drawn. It had its own third formula
-         * before, which is how it came to disagree with both. */
+         * gone out. */
         feStall: ins.wrapsLine && ins.f1respA !== null && ins.f1reqB !== null
           ? nn(ins.f1reqB - wrapSlotFreeCycle(ins))
           : null,
@@ -1345,8 +1386,6 @@
       };
     }
 
-    /* Observed maxima over non-flushed instructions only: flushed stage timestamps
-     * reflect a cancelled path, not real pipeline pressure. */
     /* FE-stall toggle: gates the drawn pre-fetch cell, the layout/metric-span
      * extension, the tooltip Pre-fetch row and the pre-fetch term of the stall
      * maxima together, so the (max N) figures stay honest. */
@@ -1357,7 +1396,8 @@
     }
     function computePipelineStats() {
       const max = { f2buf: 0, dbuf: 0, ebuf: 0, cmWait: 0, icStall: 0, feStall: 0, fuLat: 0, dataStall: 0, lsqWait: 0, preFetch: 0, totalStall: 0, bubble: 0, storeDc: 0, loadDc: 0 };
-      for (const ins of allInstrs) {
+      const scope = (typeof vis !== 'undefined' && vis && vis.length) ? vis : allInstrs;
+      for (const ins of scope) {
         if (ins.flushed) continue;
         const w = instWaits(ins);
         for (const k of Object.keys(max)) {
@@ -1571,9 +1611,6 @@
            * included) so JSON.parse sees exactly what the file said. */
           if (inStr) {
             if (!esc && ch !== '"' && ch !== '\\') {
-              /* Bulk-scan string interiors by slice, they carry most of a
-               * trace's bytes. Bound the backslash search to the segment before
-               * the next quote so the chunk is not rescanned per string. */
               const nq = chunk.indexOf('"', i);
               const end = nq < 0 ? chunk.length : nq;
               let seg = chunk.slice(i, end);
@@ -1798,12 +1835,22 @@
     function promptSizeCheck(f, maxBytes) {
       _pendingBigFile = f;
       _bigMaxBytes = maxBytes;
-      showModalMessage('Trace too large to load whole',
-        `<p><b>"${escapeHtml(f.name)}"</b> is ${(f.size / (1024 * 1024 * 1024)).toFixed(2)} GB, ` +
-        `past the ${(maxBytes / (1024 * 1024)).toFixed(0)} MB whole-file limit (a browser cannot ` +
-        `hold a file this size as one string).</p>` +
-        `<p>It may still hold few enough instructions to load whole. Counting ` +
-        `them\u2026 <span id="bigcount" style="color:var(--text2)">0%</span></p>` +
+      const mb = (f.size / (1024 * 1024)).toFixed(0);
+      const overBytes = f.size > maxBytes;
+      const why = overBytes
+        ? `<p><b>"${escapeHtml(f.name)}"</b> is ${mb} MB, past the ` +
+        `${(maxBytes / (1024 * 1024)).toFixed(0)} MB whole-file limit: a browser ` +
+        `cannot hold a file this size as one string, so it cannot be parsed ` +
+        `whole.</p>`
+        : `<p><b>"${escapeHtml(f.name)}"</b> is ${mb} MB, large enough that it ` +
+        `probably holds more than the ` +
+        `${MAX_STREAM_INSTRUCTIONS.toLocaleString()} instructions the viewer ` +
+        `renders at once. Counting first avoids parsing the whole file only ` +
+        `to discard it.</p>`;
+      showModalMessage('Checking how many instructions this holds',
+        why +
+        `<p>Counting the records\u2026 ` +
+        `<span id="bigcount" style="color:var(--text2)">0%</span></p>` +
         `<p style="margin-top:12px"><button class="tbtn" onclick="closeModalMessage()">Cancel</button></p>`);
       requestAnimationFrame(() => requestAnimationFrame(() => startSizeCount(f)));
     }
@@ -1902,10 +1949,9 @@
 
     function loadF(f) {
       if (!f) return;
-      /* V8 caps a string at about 0.5 GB (Firefox ~1 GB), so readAsText fails
-       * outright above this and the object graph would be several times larger. */
       const MAX_JSON_BYTES = 500 * 1024 * 1024;
-      if (f.size > MAX_JSON_BYTES) {
+      const COUNT_FIRST_BYTES = 100 * 1024 * 1024;
+      if (f.size > MAX_JSON_BYTES || f.size > COUNT_FIRST_BYTES) {
         /* Forget the previous file's total, or the prompt quotes its record count. */
         _bigTotal = null;
         _bigCountPromise = null;
@@ -1971,11 +2017,34 @@
       r.readAsText(f);
     }
 
-    /* Optional sample trace, not shipped in the repo. Generate it into tests/
+    /* Nothing is loaded yet, so neither band has anything to draw. */
+    document.addEventListener('DOMContentLoaded', syncHeldToggles);
+
+    /* Optional sample trace. Generate it into tests/
      * to enable the sample button. When served the JSON is fetched, under
      * file:// a script tag sets window.__SAMPLE_TRACE__ instead. */
     const SAMPLE_URL = 'tests/daxpy.config1.json';
     const SAMPLE_URL_JS = 'tests/daxpy.config1.js';
+
+    function probeSample() {
+      const btn = document.getElementById('load-sample-btn');
+      if (!btn) return;
+      btn.style.display = 'none';
+      const show = () => { btn.style.display = ''; };
+      const viaScript = () => {
+        const s = document.createElement('script');
+        s.src = SAMPLE_URL_JS;
+        s.onload = () => { if (window.__SAMPLE_TRACE__) show(); s.remove(); };
+        s.onerror = () => { s.remove(); };
+        document.head.appendChild(s);
+      };
+      try {
+        fetch(SAMPLE_URL, { method: 'GET' })
+          .then(r => { if (r.ok) show(); else viaScript(); })
+          .catch(viaScript);
+      } catch (e) { viaScript(); }
+    }
+    document.addEventListener('DOMContentLoaded', probeSample);
 
     function loadSample() {
       showLoading('loading sample\u2026');
@@ -2018,6 +2087,10 @@
       if (!Array.isArray(d.instructions)) return 'the "instructions" array is missing';
       if (d.instructions.length === 0) return 'the "instructions" array is empty';
       const r = d.instructions[0];
+      if (('disasm' in r) && !('instr' in r)) {
+        return 'this looks like a CVA6Flow trace: its records carry "disasm" '
+          + 'where a MinorFlow trace carries "instr". Open it in CVA6Flow instead';
+      }
       /* Check every timeline field the tracer always emits, so a wrong or truncated
        * JSON is named precisely instead of failing later inside the render. */
       const need = ['seq', 'pc', 'instr', 'fu', 'f1req', 'f1', 'f2', 'dec', 'dtoe', 'exbuf', 'ex', 'fuDone', 'cm'];
@@ -2025,6 +2098,37 @@
         if (!(k in r)) return `instruction records are missing the "${k}" field that the MinorFlow tracer always emits`;
       }
       return null;
+    }
+
+    /* True when either span map holds at least one span. */
+    function hasSpans(...maps) {
+      return maps.some(m => Object.values(m || {}).some(v => v && v.length));
+    }
+
+    /* A toggle with nothing to draw is disabled and says why, so an empty
+     * result cannot be mistaken for a broken control. */
+    function syncHeldToggles() {
+      const cases = [
+        ['blk-on', 'blk-lbl', hasSpans(dcBlockedSpans, dcChargeSpans),
+          'data cache', 'DCache Held'],
+        ['iblk-on', 'iblk-lbl', hasSpans(icBlockedSpans, icChargeSpans),
+          'instruction cache', 'ICache Held'],
+      ];
+      for (const [boxId, lblId, ok, what] of cases) {
+        const box = document.getElementById(boxId);
+        const lbl = document.getElementById(lblId);
+        if (!box || !lbl) continue;
+        /* Kept on first sight, since the disabled text replaces it. */
+        if (lbl.dataset.title === undefined) lbl.dataset.title = lbl.title;
+        box.disabled = !ok;
+        if (!ok) box.checked = false;
+        lbl.style.opacity = ok ? '' : '0.45';
+        lbl.title = ok ? lbl.dataset.title
+          : `Nothing to show: the ${what} reported no blocking and no ` +
+          `charged window anywhere in this trace. Most of these causes ` +
+          `need the patched build, and all of them need CacheAll in ` +
+          `--debug-flags when the trace is captured.`;
+      }
     }
 
     /* Populate viewer state from parsed JSON and render. Records are already built
@@ -2073,6 +2177,11 @@
       dcMissCyclesArr = (dcEv.miss_cycles || []).slice().sort((a, b) => a - b);
       dcBlockedSpans = dcEv.blocked_spans || {};
       dcChargeSpans = dcEv.charge_spans || {};
+      icBlockedSpans = icEv.blocked_spans || {};
+      icChargeSpans = icEv.charge_spans || {};
+      const rasEv = data.ras_events || {};
+      rasDepth = rasEv.depth || [];
+      rasDropCycles = rasEv.drop_cycles || [];
       dcStoreAccessCyclesArr = (dcEv.store_access_cycles || []).slice().sort((a, b) => a - b);
       dcStoreMissCyclesArr = (dcEv.store_miss_cycles || []).slice().sort((a, b) => a - b);
       dcMshrMissCyclesArr = (dcEv.mshr_miss_cycles || []).slice().sort((a, b) => a - b);
@@ -2111,6 +2220,8 @@
         .sort((a, b) => (a.cm - b.cm) || (a.seq - b.seq))
         .map(r => ({ cycle: r.cm, pc: r.pc, instr: r.instr, fu: r.fu, fetchSeq: r.seq }));
 
+      syncHeldToggles();
+
       /* ----- derived analysis + view setup ----- */
       buildDerivedAnalysisAndRender(icMissCycles, fetch1Req, fetch1Map, dcacheByCycle, branchPredInfo, commitList);
     }
@@ -2134,8 +2245,10 @@
         for (const ins of allInstrs) {
           {
             const srcs = (ins.src || '').split(',').map(s => s.trim()).filter(s => s && s !== '-');
+            const seenSrc = new Set();
             for (const r of srcs) {
-              if (isZeroReg(r)) continue;
+              if (isZeroReg(r) || seenSrc.has(r)) continue;
+              seenSrc.add(r);
               const prodSeq = lastProducer[r];
               if (prodSeq !== undefined && prodSeq !== ins.seq)
                 (ins._fwdFrom ??= []).push({ prodSeq, reg: r });
@@ -2149,12 +2262,7 @@
             }
           }
         }
-      }
-
-      /* Consumers waiting on slow producers. gem5 sets returnCycle from opLat
-       * alone, ignoring miss latency, so a consumer of a missing load looks
-       * done early. Extend fuDone to data arrival plus opLat, capped at 10. */
-      {
+      } {
         const bySeq = new Map();
         for (const ins of allInstrs) bySeq.set(ins.seq, ins);
 
@@ -2324,8 +2432,6 @@
         }
         if (!isFinite(archMinGap)) archMinGap = 1;
 
-        /* Measured against the last non-flushed predecessor. Flushed instructions
-         * get 0: their fetch is already counted as FlushStall on the resuming one. */
         let lastNonFlushed = null;
         let fetchGroupFirst = null;   // first non-flushed instruction of the current shared-fetch line
         for (let i = 0; i < ordered.length; i++) {
@@ -2347,9 +2453,6 @@
             lastNonFlushed = cur;
             continue;
           }
-          /* Measure against prev's last fetch request, its high one when it
-           * wraps, so a wrap's second fetch is not charged as a front-end wait.
-           * A shared high request measures from prev's low one instead. */
           let prevLastReq;
           if (prev.wrapsLine && prev.f1reqB != null) {
             prevLastReq = (cur.f1req === prev.f1reqB && prev.f1reqA != null)
@@ -2365,6 +2468,7 @@
       /* Surface the available fetch-number range as input placeholders, and
        * clear any stale filter from a previous file load. */
       computePipelineStats();
+      cfgInputs = { observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle, branchPredInfo };
       inferredConfig = computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle, branchPredInfo, allInstrs);
       renderConfigPanel();
       const seqs = allInstrs.map(i => i.seq);
@@ -2399,6 +2503,7 @@
      * Buffer sizes and issue and commit widths are observed lower bounds, the
      * trace not always reaching the configured limit. */
     let inferredConfig = { sections: [] };
+    let cfgInputs = null;
     let cfgPanelDirty = false;   // set true when a new trace loads, consumed when the config panel next opens
 
     function computeInferredConfig(observedLineSize, fetch1Req, fetch1Map, icMissCycles, dcacheByCycle, branchPredInfo, allInstrs) {
@@ -2477,27 +2582,9 @@
         rows: [
           ['clock period', `${L(TPC)} ps`, 'Detected from the most frequent positive tick delta.'],
           ['clock frequency', `${(1e6 / TPC).toFixed(1)} MHz`, 'Derived from the clock period.'],
-          ['total cycles', `${L(totalCyc)}`, 'Span from first fetch to last commit.'],
-          ['fetched instructions', `${L(numInst)}`, 'Instruction records in this trace, committed and flushed alike.'],
-          ['committed instructions', `${L(cmCycs.length)}`, 'Instructions that retired in program order.'],
-          ['flushed instructions', `${L(flushed)}`, 'Speculative instructions discarded after a redirect.'],
-          ['compress instructions', `${L(nCompress)}`, '16-bit RVC instructions.'],
-          ['wrap instructions', `${L(nWrap)}`, 'Instructions whose fetch spanned two cache lines.'],
-          ['IPC', ipc.toFixed(3), 'Committed instructions divided by total cycles.'],
-          ['time (elapsed)', `${fmtTime(totalCyc * TPC / 1000)} (${L(totalCyc)} cyc)`,
-            'Total elapsed time across the trace, converted from the cycle count using the clock period above.'],
-          ['ICache accesses', (icAccessCycles.length && fetchReqSet.size !== icAcc ? `${L(icAcc)} (${L(fetchReqSet.size)})` : `${L(icAcc)}`),
-            icAccessCycles.length
-              ? 'The l1icaches access lines from the trace (hits plus misses).'
-              : 'Distinct cycles where the front-end issued a fetch request (lo or hi line).'],
-          ['DCache accesses', `${L(dcAcc)} (${L(nLoads)} ld, ${L(nStores)} st)`, 'Every load and every store generates one access (counted at LSQ memory dispatch).'],
-          ['FlushStalls', `${L(stallFlush)}`, 'Recovery after a mispredict, an unpredicted-branch redirect, or a serialize drain (M5Op): bubble plus pre-fetch wait on the resuming instruction, excluding the executeBranchDelay (drawn separately as a Branch delay cell).'],
-          ['FetchStalls', `${L(stallFetch)}`, 'Front-end unable to issue a fetch: every in-flight fetch outstanding, the Fetch2 or Decode input buffer full, or the steering bubble on a correctly predicted taken branch.'],
-          ['DataStalls', `${L(stallData)}`, 'Exec-buffer pre-issue wait, the LSQ hazard on memory ops (load dispatch-to-issue wait and store wait to enter a saturated LSQ), and the producer hazard (a consumer waiting on a non-memory producer).'],
-          ['DataMemoryStalls', `${L(stallDMem)}`, 'A consumer holding its FU while waiting for a load result (the memory hazard).'],
-          ['TotalStalls', `${L(stallCyc)} (${stallPct}%)`, 'Deduplicated union of the four stall causes, where a cycle stalled for more than one reason at once counts once.'],
         ],
       });
+
 
       /* ---- Pipeline structure. The forward delay parameters themselves live in
        * Configuration parameters below. ---- */
@@ -2864,17 +2951,98 @@
         rows: branchRows,
       });
 
+      if (rasDepth.length || rasDropCycles.length) {
+        const depths = rasDepth.map(e => e[1]);
+        const maxDepth = depths.length ? Math.max(...depths) : 0;
+        const endDepth = depths.length ? depths[depths.length - 1] : 0;
+        const pushes = rasDepth.filter((e, i) =>
+          i === 0 ? e[1] > 0 : e[1] > rasDepth[i - 1][1]).length;
+        const pops = rasDepth.length - pushes;
+        const capacity = branchPredInfo['RAS size'];
+        const rasRows = [
+          ['pushes / pops', `${L(pushes)} / ${L(pops)}`,
+            'Calls that pushed a return address and returns that popped one, over the whole trace.'],
+          ['deepest recorded', `${L(maxDepth)}` + (capacity ? ` of ${capacity}` : ''),
+            'Highest entry count the stack reached. Reaching capacity means the oldest return address was overwritten, so the return that needed it mispredicts.'],
+          ['depth at the end', `${L(endDepth)}`,
+            'Entries still on the stack when the trace ends. A figure well above zero on a balanced program is the signature of pushes left standing by squashes.'],
+          ['left unrepaired by squashes', `${L(rasDropCycles.length)}`,
+            'Speculative pushes and pops a squash left in place instead of undoing, which is what rasNoRecovery transcribes from CVA6\u2019s scan-driven stack. Zero on a stock build, which repairs the stack on every squash.'],
+        ];
+        cfg.sections.push({
+          title: 'Return address stack (whole trace)',
+          rows: rasRows,
+        });
+      }
+
       return cfg;
     }
 
-    function renderConfigPanel() {
+    /* ---- Statistics for the current fetch range. */
+    function windowStatsSection() {
+      const barVal = id => {
+        const el = document.getElementById(id);
+        const t = el ? el.textContent.trim() : '';
+        return (t === '' || t === '-') ? '-' : t;
+      };
+      const STAT_ROWS = [
+        ['total cycles', 's-cyc', 'Cycles spanned by the instructions in the current fetch range.'],
+        ['fetched instructions', 's-fet', 'Instruction records in the range, committed and flushed alike.'],
+        ['committed instructions', 's-cmt', 'Instructions in the range that retired in program order.'],
+        ['flushed instructions', 's-flsh', 'Speculative instructions in the range discarded after a redirect.'],
+        ['compress instructions', 's-cmp', '16-bit RVC instructions in the range.'],
+        ['wrap instructions', 's-wrp', 'Instructions in the range whose fetch spanned two cache lines.'],
+        ['IPC', 's-ipc', 'Committed instructions divided by cycles, over the range.'],
+        ['time (elapsed)', 's-time', 'Elapsed time for the range, from its cycle count and the clock period above.'],
+        ['ICache misses', 's-icm', 'ICache miss cycles in the range, matching gem5 overallMshrMisses.'],
+        ['ICache accesses', 's-ica', 'ICache access cycles in the range, matching gem5 overallAccesses.'],
+        ['DCache misses', 's-dcm', 'DCache miss cycles in the range, matching gem5 overallMshrMisses.'],
+        ['DCache accesses', 's-dca', 'DCache access cycles in the range, split into loads and stores.'],
+        ['FlushStalls', 's-stall-flush', 'Recovery after a mispredict, an unpredicted-branch redirect, or a serialize drain.'],
+        ['FetchStalls', 's-stall-fetch', 'Front-end unable to issue a fetch, including the high line of a line-spanning fetch waiting for its slot.'],
+        ['DataStalls', 's-stall-data', 'Exec-buffer pre-issue wait, the LSQ hazard on memory ops, and the producer hazard.'],
+        ['DataMemoryStalls', 's-stall-dmem', 'A consumer holding its FU while waiting for a load result.'],
+        ['TotalStalls', 's-stall', 'Deduplicated union of the four causes, where a cycle stalled for more than one reason counts once.'],
+      ];
+      return {
+        title: 'Statistics (current fetch range)',
+        rows: STAT_ROWS.map(([label, id, desc]) => [label, barVal(id), desc]),
+      };
+    }
+
+    function renderConfigPanel(keepScroll) {
       const body = document.getElementById('cfg-body');
       if (!inferredConfig.sections || !inferredConfig.sections.length) {
-        body.innerHTML = '<p style="color:var(--text3);font-size:11px">Load a trace to populate this panel.</p>';
+        body.innerHTML = '<p style="color:var(--text3);font-size:11px">Load a JSON to populate this panel.</p>';
         return;
       }
-      let html = '';
+      const CONFIG_FIRST = ['Simulation', 'Pipeline structure', 'Buffer / queue sizes',
+        'Configuration parameters'];
+      const OBSERVED = new Set(['Buffer peak occupancy (observed)',
+        'Functional units (per FU index)', 'Cache subsystem',
+        'Branch behaviour (observed)']);
+      let windowSections = null;
+      if (cfgInputs && typeof vis !== 'undefined' && vis && vis.length) {
+        const ci = cfgInputs;
+        windowSections = computeInferredConfig(ci.observedLineSize, ci.fetch1Req,
+          ci.fetch1Map, ci.icMissCycles, ci.dcacheByCycle, ci.branchPredInfo, vis).sections;
+      }
+      const pick = (title) => {
+        const w = windowSections && windowSections.find(x => x.title === title);
+        return w || inferredConfig.sections.find(x => x.title === title);
+      };
+      const secs = [];
+      for (const t of CONFIG_FIRST) {
+        const sec = inferredConfig.sections.find(x => x.title === t);
+        if (sec) secs.push(sec);
+      }
+      secs.push(windowStatsSection());
       for (const sec of inferredConfig.sections) {
+        if (CONFIG_FIRST.includes(sec.title)) continue;
+        secs.push(OBSERVED.has(sec.title) ? pick(sec.title) : sec);
+      }
+      let html = '';
+      for (const sec of secs) {
         html += `<h3>${sec.title}</h3><table>`;
         for (const [name, value, note] of sec.rows) {
           html += `<tr><td>${name}</td><td>${value}</td><td>${note || ''}</td></tr>`;
@@ -2882,8 +3050,12 @@
         html += '</table>';
       }
       body.innerHTML = html;
-      body.scrollTop = 0;     // resets immediately if the panel is open during load
-      cfgPanelDirty = true;   // a panel hidden during load cannot scroll, so flag it for the next open
+      /* Only a freshly loaded trace resets the scroll. A re-render caused by the
+       * fetch range changing must leave the reader where they were. */
+      if (!keepScroll) {
+        body.scrollTop = 0;
+        cfgPanelDirty = true;
+      }
     }
 
     function toggleConfigPanel() {
@@ -2918,9 +3090,6 @@
       if (!arrow || !head) return 140;
       const a = arrow.getBoundingClientRect(), hd = head.getBoundingClientRect();
       const w = Math.ceil(a.right - hd.left) + 6;
-      /* Stop short of the legend keys. A margin measured from the arrow alone
-       * let the first few pixels of the compressed key show at the narrowest
-       * width, so the minimum is also held below the key's left edge. */
       const key = head.querySelector('.lgnd');
       if (key) {
         const kl = Math.floor(key.getBoundingClientRect().left - hd.left) - 2;
@@ -2928,9 +3097,6 @@
       }
       return Math.max(80, w || 140);
     }
-    /* Widest label row, measured from the text alone. Every layout read is a
-     * way for the ceiling to follow the column it caps, as reading scrollWidth
-     * did, so the row is rebuilt here from the CSS constants instead. */
     const LBL_PAD_X = 4;   /* .lblrow padding, left and right */
     const LBL_GAP = 6;            /* .lblrow gap between the columns */
     let _lblContentW = null;
@@ -2979,9 +3145,6 @@
       const head = document.getElementById('lblhead');
       if (head) {
         const hd = head.getBoundingClientRect();
-        /* The legend keys sit at the end of the header, so their right edge is
-         * the width at which "wraps fetch line" becomes readable. That is the
-         * floor for the ceiling, used on its own when no labels are loaded. */
         for (const k of head.querySelectorAll('.lgnd')) {
           const r = k.getBoundingClientRect();
           /* Bounded: this is the one layout read left, and a legend cannot
@@ -3010,12 +3173,7 @@
       return w;
     }
     function relayoutAfterLabelResize() { if (typeof vis !== 'undefined' && vis && vis.length) { setupScrollers(); redraw(); } }
-    /* One grip spanning every row that stays aligned with the label column,
-     * rather than one per row, which left a visible break between them. It
-     * lives in #view and shrinks with the writeback panel. */
-    /* Bring the column inside the limits the freshly loaded program implies.
-     * The stylesheet default can sit outside the measured range when the
-     * mnemonics are short. Deferred so the rows can be measured. */
+
     function clampLabelWidthToContent() {
       requestAnimationFrame(() => {
         invalidateLabelContentWidth();
@@ -3034,12 +3192,11 @@
       const head = document.getElementById('lblhead');
       if (!grip || !view) return;
       const vr = view.getBoundingClientRect();
-      const hr = (head || document.getElementById('lblpanel') || view).getBoundingClientRect();
+      const anchor = document.getElementById('rulerrow') || head
+        || document.getElementById('lblpanel') || view;
+      const hr = anchor.getBoundingClientRect();
       const top = Math.max(0, Math.round(hr.top - vr.top));
       grip.style.top = top + 'px';
-      /* Stop at the bottom of the last row aligned with the column. The status
-       * bar is inside #view, so running to the container's bottom drew the grip
-       * across it. Using the writeback panel makes the grip shrink with it. */
       const rows = ['wbpanel', 'main', 'area'].map(id => document.getElementById(id))
         .filter(el => el && el.getBoundingClientRect().height > 0
           && el.style.display !== 'none');
@@ -3082,6 +3239,7 @@
         relayoutAfterLabelResize();
         e.preventDefault();
       });
+      window.addEventListener('resize', () => placeLabelGrip());
       window.addEventListener('mouseup', () => {
         if (!dragging) return;
         dragging = false;
@@ -3096,9 +3254,6 @@
       });
     })();
 
-    /* A trace dropped anywhere on the page loads it. Otherwise the drop lands
-     * on the document once the dropzone is gone and the browser navigates to
-     * the raw JSON. The dropzone's own handler only clears its highlight. */
     document.addEventListener('dragover', e => { e.preventDefault(); });
     document.addEventListener('drop', e => {
       e.preventDefault();
@@ -3108,25 +3263,15 @@
       if (f) loadF(f);
     });
 
-    /* The zoom readout is editable, so the number goes in its field and the
-     * unit and any range note go in the span beside it. */
     function showZoomValue(cw, rangeLimited) {
       const inp = document.getElementById('zoom-val');
       if (inp && document.activeElement !== inp) {
-        /* Show the value that is actually in force, decimals and all. Rounding
-         * the display to a whole pixel made a typed 12.34 read back as 12,
-         * so committing the box a second time silently changed the zoom. */
         inp.value = String(Math.round(cw * 100) / 100);
       }
       const note = document.getElementById('zoom-note');
       if (note) note.textContent = 'px' + (rangeLimited ? ' (max for this range)' : '');
     }
-    /* Manual zoom entry, any real number above zero, clamped to the window's
-     * usable ceiling past which the inner element exceeds the browser's pixel
-     * limit. Sub-pixel values are allowed, Fit All produces them. */
-    /* Live filter for the zoom box: digits, one decimal point, two decimals.
-     * No clamping here, a value below the minimum can be the prefix of a valid
-     * larger one still being typed. setZoomTo clamps on commit. */
+
     function onZoomInput(el) {
       let v = el.value.replace(/[^0-9.]/g, '');
       const first = v.indexOf('.');
@@ -3139,9 +3284,6 @@
       const v = parseFloat(String(raw).replace(',', '.'));
       const cap = Math.min(maxSafeCellW(), MAX_CELL);
       if (!isFinite(v) || v <= 0) { showZoomValue(cellW, false); return; }
-      /* Clamped to one pixel per cycle at the low end and to this window's
-       * ceiling at the high end, then rounded to the two decimals the box
-       * accepts, so what is applied is exactly what the box ends up showing. */
       const target = Math.round(Math.max(1, Math.min(v, cap)) * 100) / 100;
       const sl = document.getElementById('zx');
       if (sl) {
@@ -3152,9 +3294,6 @@
       setZoom(0, target);
     }
 
-    /* Copy every metric from Cycles to Stall, one "Label: value" per line. The
-     * labels are read back out of the bar rather than duplicated here, so a
-     * wording change cannot leave the copy out of step with the display. */
     const METRIC_COPY_IDS = ['s-cyc', 's-fet', 's-cmt', 's-flsh', 's-cmp', 's-wrp',
       's-icm', 's-dcm', 's-ica', 's-dca', 's-br', 's-misp', 's-unpred', 's-time',
       's-ipc', 's-stall-flush', 's-stall-fetch', 's-stall-data', 's-stall-dmem',
@@ -3164,7 +3303,11 @@
       for (const id of METRIC_COPY_IDS) {
         const el = document.getElementById(id);
         if (!el || !el.parentElement) continue;
-        const txt = el.parentElement.textContent.replace(/\s+/g, ' ').trim();
+        const clone = el.parentElement.cloneNode(true);
+        for (const sup of clone.querySelectorAll('sup')) {
+          sup.replaceWith(clone.ownerDocument.createTextNode(''));
+        }
+        const txt = clone.textContent.replace(/\s+/g, ' ').replace(/\s+:/g, ':').trim();
         if (txt) lines.push(txt);
       }
       const text = lines.join('\n');
@@ -3175,9 +3318,6 @@
         btn.textContent = ok ? 'Copied' : 'Copy failed';
         setTimeout(() => { btn.textContent = prev; }, 1200);
       };
-      /* execCommand fallback: a page opened straight off the filesystem is not
-       * a secure context in every browser, and the async clipboard API is
-       * unavailable there. */
       const fallback = () => {
         try {
           const ta = document.createElement('textarea');
@@ -3198,9 +3338,6 @@
       }
     }
 
-    /* Anchor for zooming, the cycle held at the viewport centre and carried
-     * across consecutive zooms. Re-deriving it from the whole-cycle origin
-     * rounds away a fraction each time and the view creeps sideways. */
     let zoomAnchorCyc = null;
     let zoomAnchorScrollX = null;
     let LBL_PANEL_HIDDEN = false;
@@ -3223,11 +3360,6 @@
       }
       if (vis && vis.length) { setupScrollers(); redraw(); }
     }
-
-
-    /* Infer the forward-delay constants: per stage pair, the minimum delta over
-     * instructions with both endpoints real (not estimated), clamped to a sane range
-     * and requiring 4+ samples, else keep the default. Updates PIPE_* in place. */
 
     /* SECTION 5 - Filter and cycle rebase. The renderer is cycle-agnostic, so
      * it takes pre-shifted records when the range filter is on. allInstrs is
@@ -3295,6 +3427,9 @@
           return r;
         });
       }
+
+      computePipelineStats();
+      renderConfigPanel(true);
 
       /* Two ranges. cMin/cMax is the render extent, every cycle-typed field
        * plus the bubble lead-in. cMinEvent/cMaxEvent is the metric extent, only
@@ -3386,12 +3521,6 @@
     /* ---- Main program region -------------------------------------------------
      * The templates open the workload with a jump to a 4096-aligned label and
      * end where the harness resumes, at the counter reads or the next m5op. */
-    /* Unconditional direct jumps only: the trampoline is a plain "j", and
-     * admitting calls or branches would let any call into a page-aligned
-     * function look like a region entry. */
-    /* A call is a jump that links. gem5 writes "jal ra, 8238" for one and
-     * "jal zero" for a plain jump, so a jal not naming zero is a call. objdump
-     * writes the pseudo "j", which matches neither way. */
     const REGION_CALL_RE = /^(?:c_)?jalr?\b(?!\s+zero)/i;
     /* Argument setup immediately in front of that call. */
     const REGION_ARGSET_RE = /^(?:c_)?(?:li|mv|addi)\s+a[0-7]\b/i;
@@ -3578,6 +3707,7 @@
         }
         /* f2buf cycles: back-pressure beyond the PIPE_F1_F2 latch propagation,
          * i.e. Fetch2's input buffer full. */
+        for (const [a, b] of icStallIntervals(ins)) addRange(fetchStall, a, b);
         if (ins.f1 !== null && ins.f2 !== null && ins.f2 > ins.f1 + PIPE_F1_F2) {
           addRange(fetchStall, ins.f1 + PIPE_F1_F2, ins.f2);
         }
@@ -3833,21 +3963,27 @@
         })),
         { key: 'f1', label: 'Fetch1 req', color: COL.f1, desc: 'Fetch1 issues the request for an instruction line, one request per line for a line-spanning instruction. Blue when the line hits.' },
         { key: 'f1reqMiss', label: 'Fetch1 req miss', color: COL.f1reqMiss, desc: 'The low-line request turns red when its line misses the instruction cache. The red runs straight into the ICache stall that follows.' },
-        { key: 'f1stall', label: 'ICache stall', color: COL.f1stall, desc: 'Fetch1 waiting for a low-line instruction-cache fill. The fill time is charged to Fetch1.' },
+        {
+          key: 'f1stall', label: 'ICache stall', color: COL.f1stall,
+          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). Both count towards FetchSt.'
+        },
         { key: 'f1resp', label: 'Fetch1 resp', color: COL.f1resp, desc: 'Fetch1 receives the line and passes it on. The response stage is one shade lighter than the request.' },
         { key: 'feStall', label: 'High line wait', color: COL.feStall, desc: 'An instruction spanning two cache lines whose high-line request did not go out once the fetch slot was free, which is when the low line came back. Cycles while the low line is still missing are the ICache stall, not this: the miss is already shown and counted there.' },
         { key: 'f1_hi', label: 'Fetch1 req (hi line)', color: COL.f1_hi, desc: 'Request for the high line of an instruction whose bytes span two lines. Drawn lighter so it reads apart from the low line. Blue when the line hits.' },
         { key: 'f1reqMiss_hi', label: 'Fetch1 req miss (hi line)', color: COL.f1reqMiss_hi, desc: 'The high-line request of a line-spanning fetch turns red when its line misses. A lighter red than the low line.' },
-        { key: 'f1stall_hi', label: 'ICache stall (hi line)', color: COL.f1stall_hi, desc: 'Fetch1 waiting for the high-line fill. A different shade so it reads apart from the low-line stall when both miss at once.' },
+        {
+          key: 'f1stall_hi', label: 'ICache stall (hi line)', color: COL.f1stall_hi,
+          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). Both count towards FetchSt. High line of a line-spanning fetch.'
+        },
         { key: 'f1resp_hi', label: 'Fetch1 resp (hi line)', color: COL.f1resp_hi, desc: 'Response for the high line of a line-spanning instruction.' },
         /* Predicted cap lives on the Fetch2 cell (predictor consulted at Fetch2). */
         { key: 'f2', label: 'Fetch2', color: COL.f2, desc: 'Fetch2 turns raw fetched bytes into a decoded instruction and consults the branch predictor.' },
         { key: 'correct', label: 'Predicted (T✓/N✓)', color: '#40c0ff', desc: 'Fetch2 cell. The predictor at Fetch2 was right and no Execute redirect was needed. A correctly predicted taken branch still pays a small bubble while Fetch1 starts the target fetch.' },
-        { key: 'f2buf', label: 'Fetch2 buf', color: COL.f2buf, desc: 'Extra wait in the Fetch2 input buffer beyond the Fetch1-to-Fetch2 latch propagation. Only drawn when downstream backpressure or congestion delays Fetch2 from accepting a line that has already cleared the latch.' },
-        { key: 'decbuf', label: 'Dec buf', color: COL.decbuf, desc: 'Extra wait in the Decode input buffer beyond the Fetch2-to-Decode latch propagation. Only drawn when downstream backpressure delays Decode from accepting an instruction that has already cleared the latch.' },
+        { key: 'f2buf', label: 'Fetch2 buffer', color: COL.f2buf, desc: 'Extra wait in the Fetch2 input buffer beyond the Fetch1-to-Fetch2 latch propagation. Only drawn when downstream backpressure or congestion delays Fetch2 from accepting a line that has already cleared the latch.' },
+        { key: 'decbuf', label: 'Decode buffer', color: COL.decbuf, desc: 'Extra wait in the Decode input buffer beyond the Fetch2-to-Decode latch propagation. Only drawn when downstream backpressure delays Decode from accepting an instruction that has already cleared the latch.' },
         { key: 'dec', label: 'Decode', color: COL.dec, desc: 'Decode finalises the instruction and assigns its execute sequence number.' },
         { key: 'dtoe', label: 'Forward delay', color: COL.dtoe, desc: 'Pipeline-register propagation between stages, one cell per latch cycle beyond the first, drawn whenever the corresponding forward-delay parameter is greater than one. The stage indicator names each one separately as Fetch1 to Fetch2 delay, Fetch2 to Decode delay, or Decode to Execute delay. They share this colour, in the same teal family as the Branch delay.' },
-        { key: 'exbuf', label: 'Exec buf', color: COL.exbuf, desc: 'Instruction waiting ahead of a functional unit for the unit and for its operands (scoreboard).' },
+        { key: 'exbuf', label: 'Execute buffer', color: COL.exbuf, desc: 'Instruction waiting ahead of a functional unit for the unit and for its operands (scoreboard).' },
         { key: 'dhaz', label: 'Hazard', color: COL.dhaz, desc: 'Post-issue wait inside the FU, shown as the Hazard stage. It has three kinds. LSQ (cell tag \'lsq\') is a load\'s structural wait in the load-store queue between dispatch and memory issue. Memory (cell tag \'mem hzd\') is the FU holding a consumer while it waits for a load result to be forwarded. Producer (cell tag \'hzd\') is the FU holding a consumer while it waits for a non-memory producer\'s forwarded data. The FU cell that follows shows the actual computation or memory-access window.' },
         { key: 'int', label: 'Execute Int', color: COL.int, desc: 'Executing on an integer functional unit.' },
         { key: 'fp', label: 'Execute FP', color: COL.fp, desc: 'Executing on a floating-point functional unit.' },
@@ -3867,6 +4003,9 @@
         { key: 'memreq', label: 'LSQ request', color: COL.memreq, desc: 'A load or store request in flight, from the cycle the LSQ issues it to the data cache until its response. This is the request, not the execute stage: MinorCPU releases the functional unit first, so the request usually outlives the Execute Mem cell and only overlaps it while it is still outstanding. CVA6Flow\u2019s LSU execute is the other shape, one unit held for the whole access.' },
         { key: 'dcmiss', label: 'DCache miss', color: COL.dcmiss, desc: 'A load or store request that missed the data cache, red and labelled "ld✗" or "st✗". It counts toward the data-cache totals in the config panel.' },
         { key: 'dcStall', label: 'DCache stall', color: COL.dcStall, desc: 'The data-cache fill wait after a load or store miss, a darker red that follows the red request.' },
+        { key: 'stallBand', label: 'Stall column (toggle)', color: `rgb(${COL.stallBand})`, desc: 'Toolbar toggle "Stalls". Tints every cycle column holding a stall of any kind. The set is the same deduplicated total the Stall metric reports for the visible window, so the highlight and the metric always agree.' },
+        { key: 'dcacheBlk', label: 'DCache held (toggle)', color: `rgb(${COL.dcacheBlk})`, desc: 'Toolbar toggle "DCache Held". Tints every cycle column in which the data cache held a request off, either by refusing the port (victim readout, fence flush, refill window, no MSHRs) or by accepting it and charging the window. Machine-wide, so it draws across every row.' },
+        { key: 'icacheBlk', label: 'ICache held (toggle)', color: `rgb(${COL.icacheBlk})`, desc: 'Toolbar toggle "ICache Held". Tints every cycle column in which the instruction cache held a request off. On this configuration that is nearly always no_mshrs: Fetch1 asked for a line while a miss was still outstanding and the port refused it, which is the retry tax the one-MSHR L1I pays.' },
         { key: 'rasPush', label: 'RAS push', color: COL.rasPush, desc: 'A call pushed its return address onto the return address stack, at the cycle Fetch2 decoded it.' },
         { key: 'rasPop', label: 'RAS pop', color: COL.rasPop, desc: 'A return popped a predicted target off the return address stack, at the cycle Fetch2 decoded it.' },
         { key: 'rasDrop', label: 'RAS left unrepaired', color: COL.rasDrop, desc: 'This instruction was squashed and its speculative push or pop was left standing instead of being undone, so the stack no longer matches the real call depth. CVA6 has no mispredict repair on its scan-driven stack, and the patch transcribes that as rasNoRecovery. Patched builds only.' },
@@ -3879,6 +4018,9 @@
       ];
 
       const present = new Set();
+      present.add('stallBand');
+      if (hasSpans(dcBlockedSpans, dcChargeSpans)) present.add('dcacheBlk');
+      if (hasSpans(icBlockedSpans, icChargeSpans)) present.add('icacheBlk');
       /* feblock needs the toggle on plus a non-zero pre_fetch_stall in the window. */
       const feStallOn = document.getElementById('festall-on')?.checked;
       const fwdOn = document.getElementById('fwd-on')?.checked;
@@ -4025,9 +4167,6 @@
       showZoomValue(cellW, rangeLimited);
       if (vis.length) {
         setupScrollers();
-        /* Re-anchor in cycle and row space, then sync the scroll position with
-         * the kbExpect guard the arrow keys use, so the listener keeps this
-         * origin. Span and height mirror setupScrollers' inner dimensions. */
         const rh = getRowH();
         const spanCyc = cMax - cMin + 3;
         const visCyc = vpW / cellW;
@@ -4138,22 +4277,30 @@
       if (document.getElementById('stallhl-on')?.checked) {
         stallSet = classifyStallCycles(vis, cMin, cMax).totalStall;
       }
-      /* Held columns, flattened across causes and across both forms. Null when
-        * the toggle is off or the trace carries none, as a stock trace does. */
-      let blockedSpans = null;
-      if (document.getElementById('blk-on')?.checked) {
+      /* Held columns, flattened across causes and both forms. Null when the
+       * toggle is off or the trace carries none, as a stock trace does. */
+      const dHeld = heldSpans('blk-on', dcBlockedSpans, dcChargeSpans);
+      const iHeld = heldSpans('iblk-on', icBlockedSpans, icChargeSpans);
+      /* Any band needs the rows translucent to stay visible underneath. */
+      const bandsActive = !!((stallSet && stallSet.size) || dHeld || iHeld);
+      /* D-side first, so the I-side band reads on top where they overlap. */
+      paintHeld(dHeld, COL.dcacheBlk);
+      paintHeld(iHeld, COL.icacheBlk);
+
+      function heldSpans(toggleId, blocked, charged) {
+        if (!document.getElementById(toggleId)?.checked) return null;
         const all = [];
-        for (const src of [dcBlockedSpans, dcChargeSpans])
+        for (const src of [blocked, charged])
           for (const cause of Object.keys(src))
             for (const s of src[cause]) all.push(s);
-        if (all.length) blockedSpans = all;
+        return all.length ? all : null;
       }
-      /* Either band needs the rows translucent to stay visible underneath. */
-      const bandsActive = !!((stallSet && stallSet.size) || blockedSpans);
-      if (blockedSpans) {
-        ctx.fillStyle = 'rgba(210,130,70,0.13)';
-        rctx.fillStyle = 'rgba(210,130,70,0.24)';
-        for (const [a, b] of blockedSpans) {
+
+      function paintHeld(spans, rgb) {
+        if (!spans) return;
+        ctx.fillStyle = `rgba(${rgb},0.13)`;
+        rctx.fillStyle = `rgba(${rgb},0.24)`;
+        for (const [a, b] of spans) {
           /* Held in raw trace cycles, like the cache event arrays, so they
            * rebase here rather than at load. */
           const lo = Math.max(a - cycleOffset, firstCyc);
@@ -4166,14 +4313,14 @@
         }
       }
       if (stallSet && stallSet.size) {
-        ctx.fillStyle = 'rgba(120,150,210,0.13)';
+        ctx.fillStyle = `rgba(${COL.stallBand},0.13)`;
         for (let c = firstCyc; c <= lastCyc; c++) {
           if (!stallSet.has(c)) continue;
           const x = (c - firstCyc) * cellW;
           ctx.fillRect(x, 0, cellW, vpH);
         }
         /* Subtle matching tint on the ruler so the correlation reads up top. */
-        rctx.fillStyle = 'rgba(120,150,210,0.22)';
+        rctx.fillStyle = `rgba(${COL.stallBand},0.22)`;
         for (let c = firstCyc; c <= lastCyc; c++) {
           if (!stallSet.has(c)) continue;
           const x = (c - firstCyc) * cellW;
@@ -4288,13 +4435,7 @@
           if (!p) continue;                            // producer outside the filter
           const prod = p.ins;
           if (prod.fuDone === null) continue;
-          /* True forwarding only: the producer writes back at the END of its
-           * commit cycle, so only a consumer issuing at <= prod.cm reads the FU
-           * output. Later reads are plain regfile accesses, not forwarding. */
           if (prod.cm === null || cons.ex > prod.cm) continue;
-          /* Arrow end: the data-arrival cycle max(cons.ex, prod.fuDone+1),
-           * clamped to the last cycle still coloured as exec (the cm cell
-           * overlays at column cm) and floored at the consumer's own issue. */
           const dataArrival = Math.max(cons.ex, prod.fuDone + 1);
           let arrowEnd = dataArrival;
           if (cons.fuDone !== null) {
@@ -4306,17 +4447,11 @@
           arrowEnd = Math.max(arrowEnd, cons.ex);
           const consX = (arrowEnd + 0.5 - firstCyc) * cellW;
           const prodRow = p.row;
-          /* Arrow start: centre of the last visibly-exec cell. For MinorCPU loads
-           * cm < fuDone (the LSQ marks the value forwardable a cycle AFTER
-           * commit) and the cm overlay covers fuDone-1, so anchor left of cm. */
           const lastExecCol = (prod.cm !== null && prod.cm < prod.fuDone) ? prod.cm : prod.fuDone;
           const prodX = (lastExecCol - 0.5 - firstCyc) * cellW;
           const prodY = (prodRow - firstRow) * ROW_H + ROW_H * 0.5;
           /* Cull arrows that lie entirely off the canvas. */
           if (Math.max(prodX, consX) < -20 || Math.min(prodX, consX) > 20000) continue;
-          /* Uniform style for every forwarding arrow, except one feeding a
-           * flushed consumer, which takes the flushed stage colour. The only
-           * producer-side variation is the lastExecCol anchor above. */
           const fwdColor = cons.flushed ? COL.flushedFwd : 'rgba(255,200,100,0.9)';
           ctx.strokeStyle = fwdColor;
           ctx.lineWidth = 2.4;
@@ -4378,9 +4513,6 @@
       }
 
       /* Thin overlay strip at a fixed pixel offset from top. For memory events. */
-      /* Part of a cell, given as fractions across it. Lets two one-cycle
-       * annotations share a cell side by side instead of stacking, which is how
-       * a branch marker and a RAS event on the same cycle are drawn. */
       function stripPart(c0, c1, color, yOff, stripH, label, f0, f1) {
         if (c0 === null || c1 === null || c1 <= c0) return;
         const span = (c1 - c0) * cellW;
@@ -4477,7 +4609,7 @@
       const H_EXEC = 0.85;
 
       if (ins.cm !== null && ins.fuDone !== null && ins.cm > ins.fuDone)
-        seg(ins.fuDone, ins.cm, sc(COL.wb), H_EXEC, 'cmw');
+        seg(ins.fuDone, ins.cm, sc(COL.wb), H_EXEC, 'co wait');
 
       /* FU execution, a non-productive wait plus the compute. For LSU records
        * the wait is [ex, memIssue), LSQ and ordering pressure. For others it is
@@ -4504,7 +4636,7 @@
 
       /* Commit drawn AFTER exec: MinorCPU loads keep the instruction in the FU
        * past commit (fuDone > cm), so the cm cell must overlay the exec bar. */
-      if (ins.cm !== null) seg(ins.cm, ins.cm + 1, sc(COL.cm), 1.0, 'cm');
+      if (ins.cm !== null) seg(ins.cm, ins.cm + 1, sc(COL.cm), 1.0, 'co');
 
       /* Execute input buffer: includes the scoreboard wait. */
       if (ins.dtoe !== null && ins.ex !== null && ins.ex > ins.dtoe)
@@ -4520,7 +4652,7 @@
        * f2ToD below. */
       const decBufStart = ins.f2 !== null ? ins.f2 + PIPE_F2_DEC : null;
       if (decBufStart !== null && ins.dec !== null && ins.dec > decBufStart)
-        seg(decBufStart, ins.dec, sc(COL.decbuf), 0.65, 'dbuf');
+        seg(decBufStart, ins.dec, sc(COL.decbuf), 0.65, 'dec buf');
 
       /* f2ToD latch transit, clipped at dec so it never overlaps the buffer-wait
        * cell. COL.dtoe gives all three latch transits one visual identity. */
@@ -4567,7 +4699,7 @@
         const tag = isTop === null ? '' : (hi ? ' hi' : ' lo');
         const reqL = `fe1${tag} req`;
         const respL = `fe1${tag} resp`;
-        const stallL = `icache${tag} stall`;
+        const stallL = (suffix) => `icache${tag} stall (${suffix})`;
         /* isTop null means this instruction needs only one line, so its lane is
          * the whole row. */
         const band = (c0, c1, color, label) => {
@@ -4580,12 +4712,19 @@
            * memory, then the response. The stall is a real wait, so it keeps its
            * own colour and label. */
           band(reqCyc, reqCyc + 1, reqC, reqL);
-          band(reqCyc + 1, end - 1, stallC, stallL);
+          band(reqCyc + 1, end - 1, stallC, stallL('miss'));
           band(end - 1, end, respC, respL);
         } else {
-          /* Hit: one continuous stage. A higher hit latency is not a stall, it
-           * just widens the request bar, with the response on the arrival cycle. */
-          band(reqCyc, Math.max(reqCyc + 1, end - 1), reqC, reqL);
+          const waitFrom = reqCyc + 1;
+          const waitTo = end - 1;
+          const obs = isTop === null ? ins.icRetry : (hi ? ins.icRetryB : ins.icRetryA);
+          const retried = (waitTo > waitFrom) && icacheRetriedHit(reqCyc, end, obs);
+          if (retried) {
+            band(reqCyc, waitFrom, reqC, reqL);
+            band(waitFrom, waitTo, stallC, stallL('retry'));
+          } else {
+            band(reqCyc, Math.max(reqCyc + 1, end - 1), reqC, reqL);
+          }
           band(end - 1, end, respC, respL);
         }
       }
@@ -4827,7 +4966,8 @@
       const stallRow = (label, val, color, ctx = '') =>
         `<tr><td style="color:#505050">${label}</td>`
         + `<td class="wrapval"><span style="color:${color}">${val}c</span>${ctx}</td></tr>`;
-      const maxNote = (m) => (m > 0 ? ` <span style="color:#505050">(max ${m})</span>` : '');
+      const maxNote = (m) => (!ins.flushed && m > 0
+        ? ` <span style="color:#505050">(max ${m})</span>` : '');
       const noteCtx = (t) => ` <span style="color:#505050">${t}</span>`;
 
       /* Short bubble labels: the full BUB txt strings overflow the tooltip value
@@ -4927,7 +5067,9 @@
       }
       const totalStallColor = totalStall > 0 ? '#e0d8a0' : '#a0a09a';
       const tsMax = pipelineStats.totalStall || 0;
-      const tsCtx = tsMax > 0 ? ` <span style="color:#505050">(max ${tsMax})</span>` : '';
+      /* Through the same guard as every other row, so a flushed instruction
+       * shows no baseline anywhere in the tooltip. */
+      const tsCtx = maxNote(tsMax);
       const totalStallRow = `<tr><td style="padding-top:2px;color:#909090;font-weight:500">Total stall</td>` +
         `<td style="padding-top:2px;color:${totalStallColor};font-weight:500">${totalStall}c${tsCtx}</td></tr>`;
 
@@ -4945,12 +5087,24 @@
          * windows (not their sum) and is what feeds Total stall. */
         let icStallRows = '';
         if (icStall) {
-          icStallRows = stallRow('ICache stall', icStall, colorizeWait(icStall, pipelineStats.icStall), maxNote(pipelineStats.icStall));
-          if (ins.wrapsLine && ins.f1reqA !== null) {
-            const loS = (ins.f1respA != null && ins.icMissA) ? Math.max(0, ins.f1respA - ins.f1reqA - 1) : 0;
-            const hiS = (ins.f1respB != null && ins.f1reqB != null && ins.icMissB) ? Math.max(0, ins.f1respB - ins.f1reqB - 1) : 0;
-            if (loS) icStallRows += `<tr><td style="color:#5a7575;padding-left:14px;font-size:10px">↪ Low line</td><td style="color:#c08080;font-size:10px">${loS}c</td></tr>`;
-            if (hiS) icStallRows += `<tr><td style="color:#5a7575;padding-left:14px;font-size:10px">↪ High line</td><td style="color:#c08080;font-size:10px">${hiS}c</td></tr>`;
+          const parts = icStallBreakdown(ins);
+          const single = (parts.length === 1 && !ins.wrapsLine) ? parts[0] : null;
+          const causeTag = c => ` <span style="color:#707070">(${c})</span>`;
+          icStallRows = stallRow('ICache stall', icStall,
+            colorizeWait(icStall, pipelineStats.icStall),
+            (single ? causeTag(single.cause) : '') + maxNote(pipelineStats.icStall));
+          if (!single) {
+            for (const p of parts) {
+              icStallRows += `<tr><td style="color:#5a7575;padding-left:14px;font-size:10px">↪ ${p.label}</td>`
+                + `<td style="color:#c08080;font-size:10px">${p.cycles}c`
+                + `<span style="color:#606060"> (${p.cause})</span></td></tr>`;
+            }
+            const sum = parts.reduce((a, p) => a + p.cycles, 0);
+            if (sum > icStall) {
+              icStallRows += `<tr><td style="color:#5a7575;padding-left:14px;font-size:10px">↪ Overlapping</td>`
+                + `<td style="color:#707070;font-size:10px">-${sum - icStall}c`
+                + `<span style="color:#606060"> (in flight together)</span></td></tr>`;
+            }
           }
         }
         /* Rows in pipeline order, matching the drawn cells left to right, with the
@@ -5016,12 +5170,15 @@
           entries.push({
             arrivalCyc,
             prodSeq,
+            key: `${reg}|${prodSeq}`,
             html: `<tr><td style="color:#505050">fwd ${escapeHtml(reg)}</td><td class="wrapval">${cell}</td></tr>`,
           });
         }
         entries.sort((a, b) => a.arrivalCyc - b.arrivalCyc || a.prodSeq - b.prodSeq);
         if (entries.length) {
-          fwdRows = `<tr><td colspan=2 style="padding-top:6px;border-bottom:1px solid #2a2a2a"><span style="color:#707070;font-size:9px;letter-spacing:0.08em;text-transform:uppercase">Forwarding</span></td></tr>` + entries.map(e => e.html).join('');
+          const seenRow = new Set();
+          const uniq = entries.filter(e => (e.key == null || !seenRow.has(e.key)) && (seenRow.add(e.key), true));
+          fwdRows = `<tr><td colspan=2 style="padding-top:6px;border-bottom:1px solid #2a2a2a"><span style="color:#707070;font-size:9px;letter-spacing:0.08em;text-transform:uppercase">Forwarded operands</span></td></tr>` + uniq.map(e => e.html).join('');
         }
       }
 
@@ -5300,7 +5457,7 @@
         if (!missed) return 'Fetch1' + tag;
         if (c === reqCyc) return 'Fetch1 (ICache miss)' + tag;  // request cell
         if (c === respCyc) return 'Fetch1' + tag;               // response cell
-        return 'ICache stall' + tag;                            // waiting between
+        return 'ICache stall' + tag + ' (miss)';                 // waiting between
       }
       if (ins.wrapsLine && ins.f1reqA !== null && ins.f1respA !== null
         && ins.f1reqB !== null && ins.f1respB !== null) {
@@ -5318,15 +5475,15 @@
 
       const f2BufS = ins.f1 !== null ? ins.f1 + PIPE_F1_F2 : null;
       if (ins.f1 !== null && f2BufS !== null && ins.f2 !== null && c >= ins.f1 + 1 && c < Math.min(f2BufS, ins.f2)) return 'Fetch1 to Fetch2 delay';
-      if (f2BufS !== null && ins.f2 !== null && c >= f2BufS && c < ins.f2) return 'Fetch2 buf';
+      if (f2BufS !== null && ins.f2 !== null && c >= f2BufS && c < ins.f2) return 'Fetch2 buffer';
       if (ins.f2 !== null && c >= ins.f2 && c < ins.f2 + 1) return 'Fetch2';
 
       const decBufS = ins.f2 !== null ? ins.f2 + PIPE_F2_DEC : null;
       if (ins.f2 !== null && decBufS !== null && ins.dec !== null && c >= ins.f2 + 1 && c < Math.min(decBufS, ins.dec)) return 'Fetch2 to Decode delay';
-      if (decBufS !== null && ins.dec !== null && c >= decBufS && c < ins.dec) return 'Dec buf';
+      if (decBufS !== null && ins.dec !== null && c >= decBufS && c < ins.dec) return 'Decode buffer';
       if (ins.dec !== null && c >= ins.dec && c < ins.dec + 1) return 'Decode';
       if (ins.dec !== null && ins.dtoe !== null && c >= ins.dec + 1 && c < ins.dtoe) return 'Decode to Execute delay';
-      if (ins.dtoe !== null && ins.ex !== null && c >= ins.dtoe && c < ins.ex) return 'Exec buf';
+      if (ins.dtoe !== null && ins.ex !== null && c >= ins.dtoe && c < ins.ex) return 'Execute buffer';
 
       const fd = ins.fuDone ?? (ins.ex !== null ? ins.ex + 1 : null);
       /* Commit is checked BEFORE the exec range: in MinorCPU loads have fuDone > cm,
@@ -5392,10 +5549,6 @@
       }
 
       /* Low and high line reported separately so a shared cell shows both sub-stages. */
-      /* wrapped says whether this instruction has two lines at all. When it does
-       * both halves are named, lo and hi, so the indicator reads like the cell
-       * it describes. A single-line fetch has nothing to disambiguate and stays
-       * unsuffixed, and the names match the legend either way. */
       const fseg = (rq, rs, m, hi, wrapped) => {
         if (rq == null || rs == null || c < rq || c > rs) return null;
         const tag = !wrapped ? '' : (hi ? ' (hi line)' : ' (lo line)');
@@ -5403,8 +5556,12 @@
         if (c === rs) return 'Fetch1 resp' + tag;
         /* Middle cycles: an ICache fill stall on a miss, but on a hit just the
          * request in flight at the hit latency, so it stays Fetch1 req. */
-        if (!m) return 'Fetch1 req' + tag;
-        return 'ICache stall' + tag;
+        if (!m) {
+          const obs = !wrapped ? ins.icRetry : (hi ? ins.icRetryB : ins.icRetryA);
+          return (c > rq && c < rs && icacheRetriedHit(rq, rs, obs))
+            ? 'ICache stall' + tag + ' (retry)' : 'Fetch1 req' + tag;
+        }
+        return 'ICache stall' + tag + ' (miss)';
       };
       let inFetch1 = false;
       if (ins.wrapsLine && ins.f1reqA != null && ins.f1respA != null
@@ -5488,15 +5645,15 @@
         'Fetch1 resp (hi line)': COL.f1resp_hi,
         'ICache stall hi': COL.f1stall_hi,
         'High line wait': COL.feStall,
-        'Fetch2 buf': COL.f2buf,
+        'Fetch2 buffer': COL.f2buf,
         'Fetch2': COL.f2,
-        'Dec buf': COL.decbuf,
+        'Decode buffer': COL.decbuf,
         'Decode': COL.dec,
         'Forward latch': COL.dtoe,
         'Fetch1 to Fetch2 delay': COL.dtoe,
         'Fetch2 to Decode delay': COL.dtoe,
         'Decode to Execute delay': COL.dtoe,
-        'Exec buf': COL.exbuf,
+        'Execute buffer': COL.exbuf,
         'Hazard': COL.dhaz,
         'Hazard (LSQ)': COL.dhaz,
         'Hazard (Memory)': COL.dhaz,
@@ -5520,10 +5677,8 @@
         'Commit wait': COL.wb,
         'Commit': COL.cm,
       };
-      /* A line-tagged name falls back to its untagged colour, so naming the low
-       * and high halves does not need a duplicate entry for every stage. Only
-       * the high line, which is drawn in its own shades, has explicit ones. */
-      return m[s] || m[s.replace(/ \((?:lo|hi) line\)$/, '')] || '#888';
+      const base = s.replace(/ \((?:miss|retry)\)$/, '');
+      return m[s] || m[base] || m[base.replace(/ \((?:lo|hi) line\)$/, '')] || '#888';
     }
 
     /* ============================================================================

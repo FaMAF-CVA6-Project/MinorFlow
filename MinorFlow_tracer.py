@@ -27,6 +27,7 @@ RE_BP = re.compile(
 RE_MINORLINE = re.compile(
     r'fetch1: MinorLine: id=\S+/\S+/(\d+)\s+size=(\d+)\s+vaddr=0x([0-9a-f]+)')
 RE_FETCHREQ = re.compile(r'fetch1: Issued fetch request to memory: (\S+)')
+RE_FETCHRETRY = re.compile(r'fetch1: recvRetry\b')
 RE_ID_LINE = re.compile(r'\d+/\S+/(\d+)')                       # -> lineSeq
 # -> tid,line,fseq
 RE_ID_FULL = re.compile(r'(\d+)/\S+/(\d+)/(\d+)\.\d+')
@@ -76,27 +77,19 @@ RE_LSQ_HELD = re.compile(
     r'lsq: No matching memory response for inst: (\S+) pc:')
 
 # Cache port blocking, by cause. Stock gem5 emits it, but only the patch gives
-# the L1D causes that dominate: on daxpy victim readout blocks 1,308 times
-# against 19 for no-MSHRs.
-#
-# The spans are in CPU cycles, so their total runs a little above the cache's
-# own blockedCycles stat: some end a tick short of a CPU edge and so cover
-# three cycles of this timeline where the cache counts two of its own.
+# the L1D causes that dominate. The spans are in CPU cycles, so their total
+# runs a little above the cache's own blockedCycles stat.
 RE_CACHEBLOCK = re.compile(
     r'(l1[id]caches): (Blocking|Unblocking) for cause (\d+)')
 
-# Return address stack. push and pop are stock and carry the depth, while drop
-# is the
-# path rasNoRecovery takes on a squash, leaving the speculative push or pop in
-# place instead of undoing it.
+# Return address stack. push and pop are stock and carry the depth. drop is
+# the rasNoRecovery path on a squash, leaving the speculative op in place.
 RE_RAS_PUSH = re.compile(r'ras: push: RAS\[\d+\] <= \S+\. Entries used: (\d+)')
 RE_RAS_POP = re.compile(r'ras: pop: RAS\[\d+\] => \S+\. Entries used: (\d+)')
 RE_RAS_DROP = re.compile(r'ras: RAS::drop leaving speculative op in place')
 
-# The accept-and-charge form of the same mechanisms. Instead of blocking the
-# port, the cache takes the request and charges it the cycles, so these never
-# appear in the same run as the blocking lines above.
-RE_WINDOW = re.compile(r'(l1[id]caches): Window (trigger|overlap) charged (\d+) cycles')
+RE_WINDOW = re.compile(
+    r'(l1[id]caches): Window (trigger|overlap) charged (\d+) cycles')
 
 # BaseCache::BlockedCause. 0 to 2 are stock, 3 to 5 are the patch's.
 BLOCKED_CAUSES = {
@@ -152,9 +145,12 @@ class Progress:
             sys.stderr.flush()
 
 
-def detect_tpc_streaming(path, progress=None):
+TPC_SAMPLE_TICKS = 20000
+
+
+def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
     """Pass 1: ticks-per-cycle = the MODE of positive deltas between unique
-    adjacent tick values. Holds only the set of distinct ticks."""
+    adjacent tick values."""
     tick_set = set()
     lines = 0
     bytes_done = 0
@@ -165,6 +161,8 @@ def detect_tpc_streaming(path, progress=None):
             m = RE_TICK.match(line)
             if m:
                 tick_set.add(int(m.group(1)))
+                if sample and len(tick_set) >= sample:
+                    break
             if progress is not None and (lines & 0x3FFFF) == 0:
                 progress.update(lines, 0, bytes_done)
     if progress is not None:
@@ -224,6 +222,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     # ---- Pass 2: event-by-event extraction ---------------------------------
     fetch1_map = {}     # lineSeq -> cycle of MinorLine response
     fetch1_req = {}     # lineSeq -> cycle of "Issued fetch request"
+    fetch1_retried = set()   # lineSeqs whose request was a retry after recvRetry
+    # recvRetry seen, next Issued fetch request is the retry
+    retry_pending = [False]
     fetch1_vaddr = {}   # lineSeq -> vaddr base
     fetch2_map = {}     # fetchSeq -> cycle of "decoder inst"
     decode_map = {}     # fetchSeq -> cycle of "Passing on inst"
@@ -246,6 +247,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     collision_replay = {}  # fetchSeq -> [cycles of the restart penalty]
     pending_collision = [None]   # cycle whose collision still needs its id
     held_by_collision = [None]   # fetchSeq the replay countdown belongs to
+    collision_unresolved = [0]   # waits that found no instruction to hang on
     ras_push = {}         # fetchSeq -> cycle its call pushed a return address
     ras_pop = {}          # fetchSeq -> cycle its return popped one
     ras_drop = {}         # fetchSeq -> cycle its squash left the stack alone
@@ -257,9 +259,6 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     blocked_spans = {}    # cache -> {cause name: [[start, end], ...]}
     charge_spans = {}     # cache -> {window kind: [[start, end], ...]}
     commit_list = []    # {cycle, pc, instr, fu, fetchSeq, upc}
-    # fetchSeq -> latest minimumCommitCycle seen. Keyed by fetchSeq, not
-    # execSeq, so a stall on either micro-op of a split macro-op lands on the
-    # single record that macro-op produces.
     exmin_map = {}
     # symbol name -> lowest base address, harvested from the exec trace.
     sym_base = {}
@@ -283,12 +282,13 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             continue
         cycle = round_half_up(int(tm.group(1)) / tpc)
 
-        # A collision line names no instruction. The LSQ reports the request
-        # it is holding on the same tick, and that is the load, so the id is
-        # taken from there rather than guessed from the queue.
+        # A collision line names no instruction, so the id comes from the
+        # request the LSQ reports holding on the same tick.
         if pending_collision[0] is not None:
             if pending_collision[0] != cycle:
                 pending_collision[0] = None
+                held_by_collision[0] = None
+                collision_unresolved[0] += 1
             elif 'No matching memory response' in l:
                 mm = RE_LSQ_HELD.search(l)
                 if mm:
@@ -316,6 +316,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 observed_line_size[0] = int(m.group(2))
             continue
 
+        if RE_FETCHRETRY.search(l):
+            retry_pending[0] = True
+            continue
+
         m = RE_FETCHREQ.search(l)
         if m:
             mm = RE_ID_LINE.search(m.group(1))
@@ -323,6 +327,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 line_seq = int(mm.group(1))
                 if line_seq not in fetch1_req:
                     fetch1_req[line_seq] = cycle
+                    if retry_pending[0]:
+                        fetch1_retried.add(line_seq)
+            retry_pending[0] = False
             continue
 
         m = RE_ICACHE.search(l)
@@ -370,11 +377,17 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             pending_collision[0] = cycle
             continue
 
-        if 'collision cleared' in l and RE_SBREPLAY.search(l):
-            if held_by_collision[0] is not None:
-                collision_replay.setdefault(
-                    held_by_collision[0], []).append(cycle)
-            continue
+        if 'collision cleared' in l:
+            m = RE_SBREPLAY.search(l)
+            if m:
+                if held_by_collision[0] is not None:
+                    collision_replay.setdefault(
+                        held_by_collision[0], []).append(cycle)
+                    if int(m.group(1)) == 0:
+                        held_by_collision[0] = None
+                else:
+                    collision_unresolved[0] += 1
+                continue
 
         # The RAS names no instruction. A push or a pop belongs to the call or
         # return fetch2 saw this cycle, and a drop belongs to the instruction whose
@@ -680,6 +693,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         wraps_line = False
         wrap_prev_line_seq = None
         f1reqA = f1respA = icMissA = None
+        icRetryA = icRetryB = None
         f1reqB = f1respB = icMissB = None
         flags = ex['flags'] or ''
         instr = ex['instr'] or ''
@@ -706,11 +720,14 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                             f1reqA = prev_req
                             f1respA = prev_resp
                             icMissA = prev_req in ic_miss_cycles
+                            icRetryA = wrap_prev_line_seq in fetch1_retried
                             f1reqB = curr_req
                             f1respB = curr_resp
                             icMissB = (
                                 curr_req in ic_miss_cycles) if curr_req is not None else None
+                            icRetryB = ex['lineSeq'] in fetch1_retried
 
+        ic_retry = ex['lineSeq'] in fetch1_retried
         # fetchReqCyc / icMiss (aggregate, with wrap override)
         fetch_req_cyc = fetch1_req.get(ex['lineSeq'])
         ic_miss = (
@@ -799,9 +816,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'f1': f1_f, 'f2': f2_f, 'dec': dec_f, 'dtoe': dto_f,
             'exbuf': try_c, 'ex': ex_fu, 'fuDone': fu_done, 'cm': cmc,
             'icMiss': ic_miss,
+            'icRetry': ic_retry,
             'wrapsLine': wraps_line, 'wrapPrevLineSeq': wrap_prev_line_seq,
-            'f1reqA': f1reqA, 'f1respA': f1respA, 'icMissA': icMissA,
-            'f1reqB': f1reqB, 'f1respB': f1respB, 'icMissB': icMissB,
+            'f1reqA': f1reqA, 'f1respA': f1respA, 'icMissA': icMissA, 'icRetryA': icRetryA,
+            'f1reqB': f1reqB, 'f1respB': f1respB, 'icMissB': icMissB, 'icRetryB': icRetryB,
             'memPush': lsq_evt.get('pushCycle') if lsq_evt else None,
             'memIssue': lsq_evt.get('issueCycle') if lsq_evt else None,
             'memComplete': lsq_evt.get('completeCycle') if lsq_evt else None,
@@ -875,6 +893,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'n_instructions': len(records),
             'has_minor_execute': has_minor_execute[0],
             'observed_line_size': line_size,
+            'unattributed_collisions': collision_unresolved[0],
         },
         'config_params': branch_pred_info,
         # Sorted base/name pairs, so the viewer can resolve a branch target to
@@ -926,7 +945,7 @@ def _dc_miss_store(lsq_evt, dcache_by_cycle):
     return True if lsq_evt.get('isStore') is True else None
 
 
-def parse_file(path, show_progress=True):
+def parse_file(path, show_progress=True, tpc=None):
     """Streaming entry point: pass 1 detects ticks-per-cycle, pass 2 builds
     the instruction records. Neither pass materialises the file."""
     total_bytes = 0
@@ -935,12 +954,17 @@ def parse_file(path, show_progress=True):
     except OSError:
         pass
 
-    p1 = Progress('pass 1/2', total_bytes, enabled=show_progress)
-    tpc = detect_tpc_streaming(path, progress=p1)
-    p1.done()
-    if show_progress:
-        print(f"[pass 1/2] done: clock period {tpc} ps "
-              f"(detected from tick deltas)", file=sys.stderr)
+    if tpc:
+        if show_progress:
+            print(f"[pass 1/2] skipped: clock period {tpc} ps given on the "
+                  f"command line", file=sys.stderr)
+    else:
+        p1 = Progress('pass 1/2', total_bytes, enabled=show_progress)
+        tpc = detect_tpc_streaming(path, progress=p1)
+        p1.done()
+        if show_progress:
+            print(f"[pass 1/2] done: clock period {tpc} ps "
+                  f"(detected from tick deltas)", file=sys.stderr)
 
     p2 = Progress('pass 2/2', total_bytes, enabled=show_progress)
     with open(path, 'r', errors='replace') as f:
@@ -959,6 +983,10 @@ def main():
                     help='Print a short summary')
     ap.add_argument('--quiet', action='store_true',
                     help='Suppress progress output')
+    ap.add_argument('--tpc', type=int, default=None, metavar='TICKS',
+                    help='Ticks per CPU cycle, skipping the detection pass. '
+                         '20000 for a 50 MHz core at the gem5 default tick '
+                         'rate. Only worth giving on a very large trace')
     args = ap.parse_args()
 
     if not os.path.isfile(args.trace):
@@ -974,7 +1002,18 @@ def main():
         pass
 
     t0 = time.time()
-    data = parse_file(args.trace, show_progress=not args.quiet)
+    data = parse_file(args.trace, show_progress=not args.quiet,
+                      tpc=args.tpc)
+
+    md = data['metadata']
+    if md.get('unattributed_collisions'):
+        print(f"[WARN] {md['unattributed_collisions']} store collision(s) "
+              f"could not be tied to an instruction, so their strips are "
+              f"missing from the timeline.", file=sys.stderr)
+    if md['n_instructions'] and not data.get('ras_events', {}).get('depth'):
+        print("[INFO] No 'ras:' lines in this trace, so the RAS push, pop and "
+              "drop markers will be absent. Add RAS to --debug-flags when "
+              "capturing if you want them.", file=sys.stderr)
 
     if data['metadata']['n_instructions'] == 0:
         print("[WARNING] No MinorCPU instructions were parsed from this file. It "
