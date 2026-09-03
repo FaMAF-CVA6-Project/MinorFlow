@@ -5,10 +5,10 @@ below are removed, and only where a gem5 runner sits beside them.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
 
-  python3 clean_gem5.py             # list, then ask
-  python3 clean_gem5.py -y          # delete without asking
-  python3 clean_gem5.py --dry-run   # list only
-  python3 clean_gem5.py m5out_daxpy # plus a --gem5-out-dir run
+  python3 clean_gem5_runs.py             # list, then ask
+  python3 clean_gem5_runs.py -y          # delete without asking
+  python3 clean_gem5_runs.py --dry-run   # list only
+  python3 clean_gem5_runs.py m5out_daxpy # plus a --gem5-out-dir run
 """
 import os
 import sys
@@ -35,9 +35,22 @@ RUNNERS = {"run_gem5.py", "run_MinorFlow_sweep.py"}
 # the gem5.opt binary the runners call, so walking it is pure cost.
 PRUNE_DIRS = {".git", "build", "vendor", "node_modules", "install", "work-ver"}
 
-# This repository, two levels up from benchmarks/gem5/.
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))
+
+def repo_root():
+    """The repository this script sits in, found by walking up to the nearest
+    .git rather than counting directory levels."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = here
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return here
+        path = parent
+
+
+REPO_ROOT = repo_root()
 
 
 def search_roots():

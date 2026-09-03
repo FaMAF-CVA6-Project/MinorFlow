@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Remove the heavy run artefacts from this viewer repository.
 
-Deletes every .list and gem5 debug-trace file, and every __pycache__ folder,
-anywhere under the repository this script sits in.
+Deletes every .list, .vcd, .fst and gem5 debug-trace file, and every
+__pycache__ folder, anywhere under the repository this script sits in.
 
 It still keeps KEEP_DIRS whole, which is what protects the CARLA 2026
 validation set: that is the evidence behind a published paper, not a run that
@@ -11,17 +11,16 @@ can be repeated.
 The viewer JSONs in tests/ are left alone. A trace is an input that
 can be produced again by rerunning.
 
-  python3 clean_repo.py             # list, then ask
-  python3 clean_repo.py -y          # delete without asking
-  python3 clean_repo.py --dry-run   # list only
+  python3 clean_MinorFlow_repo.py             # list, then ask
+  python3 clean_MinorFlow_repo.py -y          # delete without asking
+  python3 clean_MinorFlow_repo.py --dry-run   # list only
 """
 import os
-import sys
 import shutil
 import argparse
 
 # Files removed, matched on the end of the name.
-FILE_SUFFIXES = (".list",)
+FILE_SUFFIXES = (".list", ".vcd", ".fst")
 
 # A debug trace is matched on '_trace' rather than on the ending
 TRACE_MARK = "_trace."
@@ -121,8 +120,8 @@ def group(targets):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Delete the .list and gem5 trace files and __pycache__ "
-                    "folders in this viewer repository.")
+        description="Delete the .list, .vcd, .fst and trace files and "
+                    "__pycache__ folders in this viewer repository.")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Delete without asking for confirmation")
     parser.add_argument("-n", "--dry-run", action="store_true",
