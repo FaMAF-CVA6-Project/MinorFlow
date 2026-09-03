@@ -19,6 +19,8 @@ import argparse
 # only at the top of each search root, which is where they land.
 ROOT_DIRS = {
     "m5out":                      "run_gem5.py: gem5's output, stats and binary",
+    "batch_results":              "run_all_gem5_benchmarks.py",
+    "CVA6_testing_sweep_results": "run_CVA6_testing_sweep.py",
     "MinorFlow_sweep_results":    "run_MinorFlow_sweep.py",
 }
 
@@ -29,7 +31,8 @@ SIBLING_DIRS = {
     "__pycache__": "left behind by python",
 }
 
-RUNNERS = {"run_gem5.py", "run_MinorFlow_sweep.py"}
+RUNNERS = {"run_gem5.py", "run_all_gem5_benchmarks.py",
+           "run_CVA6_testing_sweep.py", "run_MinorFlow_sweep.py"}
 
 # Never descended into. These cannot hold a generated folder, and build/ holds
 # the gem5.opt binary the runners call, so walking it is pure cost.
@@ -38,7 +41,8 @@ PRUNE_DIRS = {".git", "build", "vendor", "node_modules", "install", "work-ver"}
 
 def repo_root():
     """The repository this script sits in, found by walking up to the nearest
-    .git rather than counting directory levels."""
+    .git rather than counting directory levels.
+    """
     here = os.path.dirname(os.path.abspath(__file__))
     path = here
     while True:
