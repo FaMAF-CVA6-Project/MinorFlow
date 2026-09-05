@@ -1188,6 +1188,7 @@
       'memPush', 'memIssue', 'memComplete', 'sbPush', 'sbDelete',
       'flushCycle',
       'f1reqA', 'f1respA', 'f1reqB', 'f1respB',
+      'f1hold', 'f1holdA', 'f1holdB',
       '_fuDone_data_arrival', '_origFuDone',
       'rasPush', 'rasPop', 'rasDropped',
     ];
@@ -3965,7 +3966,7 @@
         { key: 'f1reqMiss', label: 'Fetch1 req miss', color: COL.f1reqMiss, desc: 'The low-line request turns red when its line misses the instruction cache. The red runs straight into the ICache stall that follows.' },
         {
           key: 'f1stall', label: 'ICache stall', color: COL.f1stall,
-          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). Both count towards FetchSt.'
+          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). (held) is fetch1WaitsForIcache: the line waited at the ready line before the request went out, which is the same wait (retry) shows on a stock build, moved ahead of the request. All three count towards FetchSt.'
         },
         { key: 'f1resp', label: 'Fetch1 resp', color: COL.f1resp, desc: 'Fetch1 receives the line and passes it on. The response stage is one shade lighter than the request.' },
         { key: 'feStall', label: 'High line wait', color: COL.feStall, desc: 'An instruction spanning two cache lines whose high-line request did not go out once the fetch slot was free, which is when the low line came back. Cycles while the low line is still missing are the ICache stall, not this: the miss is already shown and counted there.' },
@@ -3973,7 +3974,7 @@
         { key: 'f1reqMiss_hi', label: 'Fetch1 req miss (hi line)', color: COL.f1reqMiss_hi, desc: 'The high-line request of a line-spanning fetch turns red when its line misses. A lighter red than the low line.' },
         {
           key: 'f1stall_hi', label: 'ICache stall (hi line)', color: COL.f1stall_hi,
-          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). Both count towards FetchSt. High line of a line-spanning fetch.'
+          desc: 'Front end waiting on the instruction cache, with the cause tagged on the cell. (miss) is this line being fetched from memory. (retry) is the request re-issued when the port reopened: it hits, but the fill payload is still landing, so gem5 charges the rest (base.cc:1436 and 1274). (held) is fetch1WaitsForIcache: the line waited at the ready line before the request went out, which is the same wait (retry) shows on a stock build, moved ahead of the request. All three count towards FetchSt. High line of a line-spanning fetch.'
         },
         { key: 'f1resp_hi', label: 'Fetch1 resp (hi line)', color: COL.f1resp_hi, desc: 'Response for the high line of a line-spanning instruction.' },
         /* Predicted cap lives on the Fetch2 cell (predictor consulted at Fetch2). */
@@ -4042,6 +4043,8 @@
         if (ins.wrapsLine && ins.f1reqB !== null) { present.add('f1_hi'); present.add('f1resp_hi'); }
         if (ins.wrapsLine && ins.icMissB === true) present.add('f1stall_hi');
         if (ins.icMiss === true || ins.icMissA === true) { present.add('f1reqMiss'); present.add('f1stall'); }
+        if (ins.f1hold != null || ins.f1holdA != null) present.add('f1stall');
+        if (ins.f1holdB != null) present.add('f1stall_hi');
         if (ins.wrapsLine && ins.icMissB === true) present.add('f1reqMiss_hi');
         if (ins.wrapsLine && ins.f1respA !== null && ins.f1reqB !== null && ins.f1reqA !== null
           && ins.f1reqB > ((multiFetch && ins.f1respA === ins.f1reqA + 1) ? ins.f1respA : ins.f1respA + 1))
@@ -4707,6 +4710,9 @@
           if (isTop === null) seg(c0, c1, sc(color), 0.60, label);
           else segHalf(c0, c1, sc(color), isTop, label);
         };
+        const heldFrom = isTop === null ? ins.f1hold : (hi ? ins.f1holdB : ins.f1holdA);
+        if (heldFrom !== null && heldFrom !== undefined && heldFrom < reqCyc)
+          band(heldFrom, reqCyc, stallC, stallL('held'));
         if (missed) {
           /* Miss: request cell, the ICache stall while the line is fetched from
            * memory, then the response. The stall is a real wait, so it keeps its
@@ -5550,8 +5556,12 @@
 
       /* Low and high line reported separately so a shared cell shows both sub-stages. */
       const fseg = (rq, rs, m, hi, wrapped) => {
-        if (rq == null || rs == null || c < rq || c > rs) return null;
+        if (rq == null || rs == null) return null;
+        const hold = !wrapped ? ins.f1hold : (hi ? ins.f1holdB : ins.f1holdA);
+        const from = (hold != null && hold < rq) ? hold : rq;
+        if (c < from || c > rs) return null;
         const tag = !wrapped ? '' : (hi ? ' (hi line)' : ' (lo line)');
+        if (c < rq) return 'ICache stall' + tag + ' (held)';
         if (c === rq) return (m ? 'Fetch1 req miss' : 'Fetch1 req') + tag;
         if (c === rs) return 'Fetch1 resp' + tag;
         /* Middle cycles: an ICache fill stall on a miss, but on a hit just the
@@ -5677,7 +5687,7 @@
         'Commit wait': COL.wb,
         'Commit': COL.cm,
       };
-      const base = s.replace(/ \((?:miss|retry)\)$/, '');
+      const base = s.replace(/ \((?:miss|retry|held)\)$/, '');
       return m[s] || m[base] || m[base.replace(/ \((?:lo|hi) line\)$/, '')] || '#888';
     }
 

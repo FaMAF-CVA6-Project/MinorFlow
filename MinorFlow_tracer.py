@@ -28,6 +28,7 @@ RE_MINORLINE = re.compile(
     r'fetch1: MinorLine: id=\S+/\S+/(\d+)\s+size=(\d+)\s+vaddr=0x([0-9a-f]+)')
 RE_FETCHREQ = re.compile(r'fetch1: Issued fetch request to memory: (\S+)')
 RE_FETCHRETRY = re.compile(r'fetch1: recvRetry\b')
+RE_FETCHHELD = re.compile(r'fetch1: Line fetch held, icache busy: (\S+)')
 RE_ID_LINE = re.compile(r'\d+/\S+/(\d+)')                       # -> lineSeq
 # -> tid,line,fseq
 RE_ID_FULL = re.compile(r'(\d+)/\S+/(\d+)/(\d+)\.\d+')
@@ -223,6 +224,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     fetch1_map = {}     # lineSeq -> cycle of MinorLine response
     fetch1_req = {}     # lineSeq -> cycle of "Issued fetch request"
     fetch1_retried = set()   # lineSeqs whose request was a retry after recvRetry
+    fetch1_held = {}    # lineSeq -> first cycle held at a busy icache
     # recvRetry seen, next Issued fetch request is the retry
     retry_pending = [False]
     fetch1_vaddr = {}   # lineSeq -> vaddr base
@@ -319,6 +321,16 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         if RE_FETCHRETRY.search(l):
             retry_pending[0] = True
             continue
+
+        if 'icache busy' in l:
+            m = RE_FETCHHELD.search(l)
+            if m:
+                mm = RE_ID_LINE.search(m.group(1))
+                if mm:
+                    line_seq = int(mm.group(1))
+                    if line_seq not in fetch1_held:
+                        fetch1_held[line_seq] = cycle
+                continue
 
         m = RE_FETCHREQ.search(l)
         if m:
@@ -694,6 +706,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         wrap_prev_line_seq = None
         f1reqA = f1respA = icMissA = None
         icRetryA = icRetryB = None
+        f1holdA = f1holdB = None
         f1reqB = f1respB = icMissB = None
         flags = ex['flags'] or ''
         instr = ex['instr'] or ''
@@ -721,13 +734,16 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                             f1respA = prev_resp
                             icMissA = prev_req in ic_miss_cycles
                             icRetryA = wrap_prev_line_seq in fetch1_retried
+                            f1holdA = fetch1_held.get(wrap_prev_line_seq)
                             f1reqB = curr_req
                             f1respB = curr_resp
                             icMissB = (
                                 curr_req in ic_miss_cycles) if curr_req is not None else None
                             icRetryB = ex['lineSeq'] in fetch1_retried
+                            f1holdB = fetch1_held.get(ex['lineSeq'])
 
         ic_retry = ex['lineSeq'] in fetch1_retried
+        f1_hold = fetch1_held.get(ex['lineSeq'])
         # fetchReqCyc / icMiss (aggregate, with wrap override)
         fetch_req_cyc = fetch1_req.get(ex['lineSeq'])
         ic_miss = (
@@ -736,6 +752,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             fetch_req_cyc = f1reqA
             if icMissA or icMissB:
                 ic_miss = True
+            f1_hold = f1holdA
+        if f1_hold is not None and (fetch_req_cyc is None
+                                    or f1_hold >= fetch_req_cyc):
+            f1_hold = None
 
         # ---- Branch model --------------------------------------------------
         is_cond = 'IsCondControl' in flags
@@ -813,12 +833,14 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'src': ex['src'], 'dest': ex['dest'], 'flags': flags,
             'fuIdx': fu_idx, 'lineSeq': ex['lineSeq'],
             'f1req': fetch_req_cyc,
+            'f1hold': f1_hold,
             'f1': f1_f, 'f2': f2_f, 'dec': dec_f, 'dtoe': dto_f,
             'exbuf': try_c, 'ex': ex_fu, 'fuDone': fu_done, 'cm': cmc,
             'icMiss': ic_miss,
             'icRetry': ic_retry,
             'wrapsLine': wraps_line, 'wrapPrevLineSeq': wrap_prev_line_seq,
             'f1reqA': f1reqA, 'f1respA': f1respA, 'icMissA': icMissA, 'icRetryA': icRetryA,
+            'f1holdA': f1holdA, 'f1holdB': f1holdB,
             'f1reqB': f1reqB, 'f1respB': f1respB, 'icMissB': icMissB, 'icRetryB': icRetryB,
             'memPush': lsq_evt.get('pushCycle') if lsq_evt else None,
             'memIssue': lsq_evt.get('issueCycle') if lsq_evt else None,
@@ -887,7 +909,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     return {
         'metadata': {
             'tool': 'minorflow_tracer',
-            'schema_version': 2,
+            'schema_version': 3,
             'clock_period_ps': tpc,
             'pipe_delays': {'f1_f2': pipe_f1f2, 'f2_dec': pipe_f2dec, 'dec_ex': pipe_dec_ex},
             'n_instructions': len(records),

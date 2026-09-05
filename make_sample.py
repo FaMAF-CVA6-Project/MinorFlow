@@ -28,6 +28,7 @@ CYCLE_FIELDS = (
     "f1req", "f1", "f2", "dec", "dtoe", "exbuf", "ex", "fuDone", "cm",
     "memPush", "memIssue", "memComplete", "sbPush", "sbDelete", "flushCycle",
     "f1reqA", "f1respA", "f1reqB", "f1respB",
+    "f1hold", "f1holdA", "f1holdB",
     "rasPush", "rasPop", "rasDropped",
 )
 
