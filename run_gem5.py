@@ -86,21 +86,21 @@ OVERHEAD_SUITES = {
     "config": {
         "patch": {
             "c": {
-                "numCycles":        27,
+                "numCycles":        32,
                 "numInsts":         6,
-                "icache_miss":      1,
+                "icache_miss":      3,
                 "dcache_miss":      0,
-                "icache_access":    15,
+                "icache_access":    17,
                 "dcache_access":    0,
                 "branch_pred":      5,
                 "branch_miss":      1,
             },
             "asm": {
-                "numCycles":        27,
+                "numCycles":        32,
                 "numInsts":         6,
-                "icache_miss":      1,
+                "icache_miss":      3,
                 "dcache_miss":      0,
-                "icache_access":    15,
+                "icache_access":    17,
                 "dcache_access":    0,
                 "branch_pred":      5,
                 "branch_miss":      1,
@@ -130,27 +130,26 @@ OVERHEAD_SUITES = {
         },
     },
     "viewer": {
-        # A copy of the stock entry, hence UNCALIBRATED below.
         "patch": {
             "c": {
-                "numCycles":        20,
-                "numInsts":         5,
-                "icache_miss":      0,
-                "dcache_miss":      0,
-                "icache_access":    10,
-                "dcache_access":    0,
-                "branch_pred":      3,
-                "branch_miss":      2,
-            },
-            "asm": {
-                "numCycles":        37,
+                "numCycles":        26,
                 "numInsts":         5,
                 "icache_miss":      1,
                 "dcache_miss":      0,
-                "icache_access":    10,
+                "icache_access":    17,
                 "dcache_access":    0,
                 "branch_pred":      4,
-                "branch_miss":      2,
+                "branch_miss":      1,
+            },
+            "asm": {
+                "numCycles":        26,
+                "numInsts":         5,
+                "icache_miss":      2,
+                "dcache_miss":      0,
+                "icache_access":    14,
+                "dcache_access":    0,
+                "branch_pred":      4,
+                "branch_miss":      1,
             },
         },
         "stock": {
@@ -180,9 +179,7 @@ OVERHEAD_SUITES = {
 
 # Profiles above that are a copy rather than their own measurement.
 # Profiles that do not match the build they are subtracted from, and why.
-UNCALIBRATED = {
-    ("viewer", "patch"): "a copy of the stock entry, not its own measurement",
-}
+UNCALIBRATED = {}
 
 
 def default_suite():
