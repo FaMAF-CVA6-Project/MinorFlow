@@ -179,7 +179,10 @@ OVERHEAD_SUITES = {
 }
 
 # Profiles above that are a copy rather than their own measurement.
-UNCALIBRATED = {("viewer", "patch")}
+# Profiles that do not match the build they are subtracted from, and why.
+UNCALIBRATED = {
+    ("viewer", "patch"): "a copy of the stock entry, not its own measurement",
+}
 
 
 def default_suite():
@@ -848,10 +851,11 @@ if __name__ == "__main__":
             print(f"[ERROR] {message}. Pick the other --variant, point "
                   f"--build at the right build, or pass --skip-build-check.")
             sys.exit(1)
-    if (args.suite, args.variant) in UNCALIBRATED:
-        print(f"[WARN] The {args.suite}/{args.variant} overhead profile is a "
-              f"copy, not its own measurement. The OFFICIAL figures are "
-              f"correct, the NET ones are not calibrated for this pairing.")
+    reason = UNCALIBRATED.get((args.suite, args.variant))
+    if reason:
+        print(f"[WARN] The {args.suite}/{args.variant} overhead profile is "
+              f"{reason}. The OFFICIAL figures are correct, the NET ones are "
+              f"not calibrated for this pairing.")
 
     program_name = os.path.splitext(os.path.basename(src_file))[0]
 
