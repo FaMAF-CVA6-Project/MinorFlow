@@ -102,13 +102,15 @@ Which overhead table it subtracts is `--suite`. This repository's benchmarks and
 
 ### What a patched build adds
 
-`MinorCPU_CVA6.patch` puts two mechanisms in the trace that a stock build has no counterpart for, and the viewer draws both.
+`MinorCPU_CVA6.patch` puts three mechanisms in the trace that a stock build has no counterpart for, and the viewer draws all of them.
 
 **Store-collision hold.** CVA6 has no store-to-load forwarding, so a load whose address collides with a pending store waits in the load-store queue for the store buffer to drain, then pays a restart penalty before presenting its request again. The two together fill the gap between `memPush` and `memIssue`, which is blank without them, and appear as `st coll` and `replay` strips with their own legend entries. On `store_fwd` 73 loads are held this way.
 
 **Cache holds.** The `DCache Held` and `ICache Held` toggles tint every cycle column in which that cache held a request off. Holding is a property of the cache rather than of any one instruction, so each draws as a band across every row, like the stall highlight. A toggle whose trace carries no spans is disabled and says why, so an empty result cannot be mistaken for a broken control.
 
 There are two forms, and accept-and-charge replaces blocking for **two causes only**: the dirty-victim readout and the refill window. Everything else still blocks under either form, so a single run usually shows both.
+
+**Front-end hold.** With `fetch1WaitsForIcache` the fetch unit keeps its line at the instruction cache's ready line instead of sending into a refusal and paying the retry round trip, which is what CVA6 does. That moves the wait ahead of the request, so it is no longer the gap between `Fetch1 req` and `Fetch1 resp` that a stock build shows as `ICache stall (retry)`. The cycles are read from the held line itself and drawn before the request cell as `ICache stall (held)`, in the same colour, so the cost stays visible and lands where it is actually paid. A stock trace has no held lines and keeps its `(retry)` cells.
 
 **Return address stack.** `run_gem5.py` enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them. A squash that leaves a speculative push or pop standing, which is what `rasNoRecovery` transcribes, is marked `ras!`.
 
