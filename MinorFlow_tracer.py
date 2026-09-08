@@ -4,9 +4,9 @@
 Windowing, bubble/stall/forwarding analysis and rendering all live in the viewer.
 
 Usage:
-    python3 minorflow_tracer.py trace.txt -o trace.json
-    python3 minorflow_tracer.py trace.txt           # writes trace.json
-    python3 minorflow_tracer.py trace.txt --stats    # also print a summary
+    python3 MinorFlow_tracer.py trace.txt -o trace.json
+    python3 MinorFlow_tracer.py trace.txt           # writes trace.json
+    python3 MinorFlow_tracer.py trace.txt --stats   # also print a summary
 """
 import time
 import math
@@ -268,7 +268,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     fetch1_vaddr = {}   # lineSeq -> vaddr base
     fetch2_map = {}     # fetchSeq -> cycle of "decoder inst"
     decode_map = {}     # fetchSeq -> cycle of "Passing on inst"
-    # fetchSeq -> {cycle, lineSeq, pc, instr, fu, flags, src, dest, predictedTaken}
+    # fetchSeq -> {cycle, lineSeq, pc, instr, fu, flags, src, dest,
+    #             predictedTaken}
     execute_map = {}
     issue_first = {}    # fetchSeq -> first "Trying to issue" cycle
     issue_ok = {}       # fetchSeq -> "Issuing inst" cycle
@@ -402,8 +403,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             continue
 
         if RE_ICCOALESCE.search(l):
-            # Printed in the same tick, straight after the access it belongs to,
-            # so it marks the most recent unmarked miss of this cycle.
+            # Printed in the same tick, straight after the access it
+            # belongs to, so it marks the most recent unmarked miss of
+            # this cycle.
             for e in reversed(ic_miss_log):
                 if e[0] != cycle:
                     break
@@ -448,9 +450,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                     collision_unresolved[0] += 1
                 continue
 
-        # The RAS names no instruction. A push or a pop belongs to the call or
-        # return fetch2 saw this cycle, and a drop belongs to the instruction whose
-        # squash discarded it. Anything with no anchor still counts globally.
+        # The RAS names no instruction. A push or pop belongs to the call
+        # or return fetch2 saw this cycle, a drop to the instruction whose
+        # squash discarded it. Anything with no anchor still counts
+        # globally.
         if 'ras: ' in l:
             m = RE_RAS_PUSH.search(l) or RE_RAS_POP.search(l)
             if m:
@@ -639,8 +642,9 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 sym = RE_COMMIT_SYM.search(m.group(2).strip())
                 if sym:
                     base = int(m.group(1), 16) - int(sym.group(2) or 0)
-                    # Lowest base wins if a name is ever seen with inconsistent
-                    # deltas, so a symbol cannot drift upwards through the file.
+                    # Lowest base wins if a name is ever seen with
+                    # inconsistent deltas, so a symbol cannot drift
+                    # upwards through the file.
                     prev = sym_base.get(sym.group(1))
                     if prev is None or base < prev:
                         sym_base[sym.group(1)] = base
@@ -740,7 +744,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         ex_fu = iss_c if iss_c is not None else ex['cycle']
         lsq_evt = lsq_events.get(seq)
 
-        # fuDone: loads use memComplete, else scoreboard returnCycle, else cm, else ex+1.
+        # fuDone: loads use memComplete, else scoreboard returnCycle,
+        # else cm, else ex+1.
         if (lsq_evt is not None
                 and lsq_evt.get('isStore') is not True
                 and lsq_evt.get('completeCycle') is not None):
@@ -1003,14 +1008,14 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     return {
         'metadata': {
             'tool': 'minorflow_tracer',
-            # 4: flushCycle now holds the discard cycle and the old value
-            # moved to branchResolveCycle; clock_period_ps became
-            # clock_period_ticks plus tick_unit; dcMissIsStore removed, it
-            # never looked at dcMiss and duplicates isStore, which is now
-            # False on loads rather than absent;
-            # _real_f2/_real_dec/_real_ret
-            # became _f2ObservedCycle/_decObservedCycle/_retObservedCycle;
-            # `estimated` is now any estimated stage rather than all three.
+            # Schema 4, five changes.
+            # flushCycle holds the discard cycle, the old value moved to
+            # branchResolveCycle. clock_period_ps became clock_period_ticks
+            # plus tick_unit. dcMissIsStore is gone: it never looked at
+            # dcMiss and duplicated isStore, which is False on loads now
+            # rather than absent. _real_f2/_real_dec/_real_ret became
+            # _f2ObservedCycle/_decObservedCycle/_retObservedCycle.
+            # `estimated` is any estimated stage rather than all three.
             'schema_version': 4,
             # Ticks, not picoseconds. gem5's default tick rate makes them
             # numerically equal and no conversion is ever applied, so the
