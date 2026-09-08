@@ -150,6 +150,10 @@ TPC_SAMPLE_TICKS = 20000
 
 
 def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
+    # Mode, not minimum. Gaps between adjacent distinct ticks are whole
+    # multiples of the period, so the commonest gap is the period itself.
+    # infer_forward_delays uses the minimum instead, because its noise is
+    # additive rather than multiplicative. See the note there.
     """Pass 1: ticks-per-cycle = the MODE of positive deltas between unique
     adjacent tick values."""
     tick_set = set()
@@ -170,7 +174,10 @@ def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
         progress.update(lines, 0, bytes_done, final=True)
 
     ticks = sorted(tick_set)
-    tpc = 10000
+    # No silent default. The old fallback of 10000 assumed 1 GHz, where the
+    # CVA6 target runs at 50 MHz (20000 ps), so a run that missed detection
+    # produced a trace with every cycle number doubled and said nothing.
+    tpc = None
     if len(ticks) > 1:
         delta_count = {}
         for i in range(1, len(ticks)):
@@ -183,17 +190,41 @@ def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
                 best_count, best_delta = c, d
         if best_delta > 0:
             tpc = best_delta
+    if tpc is None:
+        sys.exit(
+            f"Could not derive ticks-per-cycle from {path}: found "
+            f"{len(ticks)} distinct tick values in the first {sample:,} "
+            f"sampled, and no positive gap between them. Every cycle number "
+            f"depends on this, so the run stops rather than guessing. Check "
+            f"the trace is a gem5 MinorCPU debug trace with tick prefixes.")
     return tpc
 
 
 def round_half_up(x):
-    """Match JS Math.round (round half UP, not banker's rounding)."""
+    """Round half away from zero at .5, unlike Python's banker's rounding.
+
+    Close to JS Math.round but not identical: for x = 0.49999999999999994
+    the addition below rounds up to exactly 1.0 in IEEE754 and this returns
+    1, where V8 special-cases the input and returns 0. Reachable only for a
+    tick that is not a whole multiple of the period. Note also that floor,
+    not round, is the semantically correct operator for tick-to-cycle: an
+    event at 1.6 cycles happened during cycle 1. Of 1,125,509 ticks sampled
+    from basic_test, 1,125,437 land exactly on a period boundary and 72 land
+    one tick past, so nothing currently rounds up either way."""
     return math.floor(x + 0.5)
 
 
 def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_first):
     """Infer MinorCPU forward delays from the minimum observed stage gap.
-    Falls back to gem5 default 1 when fewer than 4 valid samples."""
+    Falls back to gem5 default 1 when fewer than 4 valid samples.
+
+    Minimum, not mode, and deliberately. A forward delay is fixed and stalls
+    only ever lengthen the observed gap, so the noise is one-sided and the
+    floor of the distribution is the parameter. The mode measures how stalled
+    the pipeline usually is: on daxpy it returns 4 for f1->f2 and 15 for
+    dec->ex where all three delays are 1. detect_tpc_streaming uses the mode
+    because its noise is multiplicative, gaps there being whole multiples of
+    the period, so the two estimators differ for a reason."""
     d_f1f2, d_f2dec, d_dectr = [], [], []
     for seq, ex in execute_map.items():
         f1 = fetch1_map.get(ex['lineSeq'])
@@ -208,6 +239,8 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
             d_dectr.append(tr - dc)
 
     def pick(deltas, fallback):
+        # A zero forward delay is legal in gem5 but excluded here, so a
+        # config using one is reported as the fallback 1 rather than 0.
         valid = [d for d in deltas if 1 <= d <= 16]
         if len(valid) < 4:
             return fallback
@@ -219,7 +252,12 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
 def parse(line_source, tpc, progress=None, total_bytes=0):
     """Pass 2: build per-instruction records from an iterable of trace lines.
     line_source may be a file handle or a list of strings, and tpc must already
-    be detected via detect_tpc_streaming."""
+    be detected via detect_tpc_streaming.
+
+    Memory is O(instructions), not O(file): the maps below are never evicted.
+    Measured at roughly 4.4 KB resident per instruction, so a trace at the
+    viewers' own MAX_STREAM_INSTRUCTIONS of 500,000 would need about 2.2 GB.
+    A 705 MB daxpy trace with 41,075 instructions peaks at 182 MB."""
     # ---- Pass 2: event-by-event extraction ---------------------------------
     fetch1_map = {}     # lineSeq -> cycle of MinorLine response
     fetch1_req = {}     # lineSeq -> cycle of "Issued fetch request"
@@ -237,11 +275,17 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     issue_fu = {}       # fetchSeq -> FU index
     scoreboard_map = {}  # fetchSeq -> returnCycle
     branch_events = {}  # fetchSeq -> [{cycle, type, target}, ...]
-    discard_map = {}    # fetchSeq -> discard cycle
+    # fetchSeq -> the cycle the record was discarded. Both the membership
+    # (flushed) and the value (flushCycle) reach the output.
+    discard_map = {}
     lsq_events = {}     # fetchSeq -> {pushCycle, issueCycle, completeCycle, isStore}
     storebuf_events = {}  # fetchSeq -> {pushCycle, deleteCycle}
     ic_miss_cycles = set()
     ic_hit_cycles = set()
+    # Wrapping instructions whose lower-half line fetch was not found
+    # within the 32-back search. Surfaced in metadata so the silent
+    # drop is visible.
+    wrap_partner_not_found = [0]
     ic_miss_log = []
     ic_hit_log = []
     dcache_by_cycle = {}  # cycle -> {miss, isWrite, coalesced}
@@ -285,7 +329,10 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         cycle = round_half_up(int(tm.group(1)) / tpc)
 
         # A collision line names no instruction, so the id comes from the
-        # request the LSQ reports holding on the same tick.
+        # request the LSQ reports holding on the same tick. Order-dependent
+        # within that tick: if the LSQ line precedes the collision line the
+        # pairing is abandoned and counted in collision_unresolved, which
+        # main surfaces as a WARN, so the failure is visible not silent.
         if pending_collision[0] is not None:
             if pending_collision[0] != cycle:
                 pending_collision[0] = None
@@ -455,6 +502,11 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             if mm:
                 fseq = int(mm.group(3))
                 ev = lsq_events.setdefault(fseq, {})
+                # Every LSQ event is a memory access, and only a store ever
+                # names a Store state, so False is the right default. Leaving
+                # it absent made isStore tri-state and pushed consumers onto
+                # an fu regex the comment beside it calls ambiguous.
+                ev.setdefault('isStore', False)
                 s_from, s_to = m.group(1), m.group(2)
                 if s_from == 'NotIssued' and s_to == 'InTranslation':
                     ev['pushCycle'] = cycle
@@ -715,14 +767,28 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             is_compressed = bool(RE_COMPRESSED.match(instr))
             pc_int = int(pc, 16)
             offset = pc_int & (line_size - 1)
+            # line_size is the MinorCPU fetch line harvested from the trace.
+            # CVA6Flow_tracer.py computes the same field against FETCH_BYTES,
+            # derived from the RTL FETCH_WIDTH. Both are 4 today and the two
+            # wrapsLine fields are comparable because of that, not by design:
+            # change fetch1LineWidth, or set SuperscalarEn so FETCH_WIDTH
+            # becomes 64, and they silently start meaning different things.
             if (not is_compressed) and offset + 4 > line_size:
                 curr_vaddr = fetch1_vaddr.get(ex['lineSeq'])
                 if curr_vaddr is not None:
                     prev_vaddr = curr_vaddr - line_size
+                    # 32 back. Consecutive line fetches are adjacent in
+                    # lineSeq, so the partner is normally one step away and
+                    # the bound only matters after a long stall or a burst
+                    # of wrong-path fetches. Failing to find it leaves
+                    # wraps_line False and drops the record's first fetch,
+                    # counted below as wrap_partner_not_found.
                     for ls in range(ex['lineSeq'] - 1, max(-1, ex['lineSeq'] - 33), -1):
                         if fetch1_vaddr.get(ls) == prev_vaddr:
                             wrap_prev_line_seq = ls
                             break
+                    if wrap_prev_line_seq is None:
+                        wrap_partner_not_found[0] += 1
                     if wrap_prev_line_seq is not None:
                         prev_req = fetch1_req.get(wrap_prev_line_seq)
                         prev_resp = fetch1_map.get(wrap_prev_line_seq)
@@ -782,13 +848,18 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             else:
                 branch_kind = None
 
-        is_cond_correct_nt = (
+        # Control instruction that committed without producing a branch
+        # event, so the front end never had to redirect. Not restricted to
+        # conditionals and not restricted to not-taken, despite what the
+        # earlier name is_cond_correct_nt claimed: an unconditional direct
+        # jump predicted by the BTB lands here and is taken.
+        ctrl_no_redirect = (
             not is_discarded) and is_ctrl and br_type is None
 
         if is_discarded or not is_ctrl:
             branch_outcome = None
         elif br_type is None:
-            branch_outcome = 'correct' if is_cond_correct_nt else None
+            branch_outcome = 'correct' if ctrl_no_redirect else None
         elif br_type == 'UnpredictedBranch':
             branch_outcome = 'unpred'
         elif br_type.startswith('Badly'):
@@ -812,7 +883,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         if is_discarded or not is_ctrl:
             branch_caught_at = None
         elif br_type is None:
-            branch_caught_at = 'fetch2' if is_cond_correct_nt else None
+            branch_caught_at = 'fetch2' if ctrl_no_redirect else None
         elif br_type == 'UnpredictedBranch':
             branch_caught_at = 'execute'
         elif br_type.startswith('Badly'):
@@ -847,7 +918,6 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'memComplete': lsq_evt.get('completeCycle') if lsq_evt else None,
             'isStore': lsq_evt.get('isStore') if lsq_evt else None,
             'dcMiss': _dc_miss(lsq_evt, dcache_by_cycle),
-            'dcMissIsStore': _dc_miss_store(lsq_evt, dcache_by_cycle),
             'sbPush': sb_evt.get('pushCycle') if sb_evt else None,
             'sbDelete': sb_evt.get('deleteCycle') if sb_evt else None,
             'collisionWait': collision_wait.get(seq) or None,
@@ -855,7 +925,13 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'rasPush': ras_push.get(seq),
             'rasPop': ras_pop.get(seq),
             'rasDropped': ras_drop.get(seq),
-            'flushCycle': branch_resolve_cyc,
+            # Cycle the branch resolved, set on any control instruction that
+            # produced a branch event, committed or not. It is not a flush
+            # timestamp, which is why the two are separate fields.
+            'branchResolveCycle': branch_resolve_cyc,
+            # Cycle this record was discarded, from the DISCARD line. None on
+            # anything that was not squashed.
+            'flushCycle': discard_map.get(seq),
             'flushed': is_discarded,
             'isControl': is_ctrl,
             'predictedTaken': ex['predictedTaken'] is True,
@@ -864,8 +940,17 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'branchCaughtAt': branch_caught_at,
             'branchKind': branch_kind,
             'serializeAfter': serialize_after,
-            'estimated': dec_real is None and f1c is None and f2real is None,
-            '_real_f2': f2real, '_real_dec': dec_real, '_real_ret': ret_cyc,
+            # Any estimated stage, not all three. The old `and` fired only
+            # in the total-blackout case, so a record with a real f1 and f2
+            # but an estimated decode reported estimated=False.
+            'estimated': (dec_real is None or f1c is None or f2real is None),
+            # Cycle values, or null when the stage was not observed and the
+            # value on the record was estimated. Named for what they hold:
+            # the old _real_* read as booleans and a genuine cycle 0 would
+            # have tested false.
+            '_f2ObservedCycle': f2real,
+            '_decObservedCycle': dec_real,
+            '_retObservedCycle': ret_cyc,
         })
 
     # ---- MinorExecute-only mnemonic enrichment -----------------------------
@@ -878,15 +963,24 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             e = enrich_by_pc.get(rec['pc'])
             if e is None or not e['instr']:
                 continue
-            rec['instr'] = e['instr']
-            rec['fu'] = e['fu']
+            # Fill, not overwrite. The enrichment is keyed by PC alone and
+            # takes the first commit at that PC, so it carries no more
+            # information than the record already has when the record has
+            # its own value.
+            if not rec.get('instr'):
+                rec['instr'] = e['instr']
+            if not rec.get('fu'):
+                rec['fu'] = e['fu']
             rec['compressed'] = bool(
                 RE_COMPRESSED.match(rec['instr'] or ''))
 
     # Accesses count every access, matching overallAccesses. Misses count only
     # those that opened an MSHR, matching overallMshrMisses.
+    # ic_miss_log entries are [cycle, coalesced], appended at the two sites
+    # above. The D-cache log next to it uses named dicts, so read the indices
+    # carefully: e[1] is coalesced, and a coalesced miss did not open an MSHR.
     ic_access_cycles = sorted(ic_hit_log + [e[0] for e in ic_miss_log])
-    ic_miss_arr = sorted(e[0] for e in ic_miss_log if not e[1])
+    ic_miss_arr = sorted(cyc for cyc, coalesced in ic_miss_log if not coalesced)
 
     # Counted from the access log, since per-instruction attribution misses
     # store writebacks that retire after commit. Cycles carry multiplicity, a
@@ -909,13 +1003,28 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     return {
         'metadata': {
             'tool': 'minorflow_tracer',
-            'schema_version': 3,
-            'clock_period_ps': tpc,
+            # 4: flushCycle now holds the discard cycle and the old value
+            # moved to branchResolveCycle; clock_period_ps became
+            # clock_period_ticks plus tick_unit; dcMissIsStore removed, it
+            # never looked at dcMiss and duplicates isStore, which is now
+            # False on loads rather than absent;
+            # _real_f2/_real_dec/_real_ret
+            # became _f2ObservedCycle/_decObservedCycle/_retObservedCycle;
+            # `estimated` is now any estimated stage rather than all three.
+            'schema_version': 4,
+            # Ticks, not picoseconds. gem5's default tick rate makes them
+            # numerically equal and no conversion is ever applied, so the
+            # unit is named separately rather than baked into the key.
+            # CVA6Flow_tracer.py emits clock_period_ts and timescale_unit
+            # the same way.
+            'clock_period_ticks': tpc,
+            'tick_unit': '1ps',
             'pipe_delays': {'f1_f2': pipe_f1f2, 'f2_dec': pipe_f2dec, 'dec_ex': pipe_dec_ex},
             'n_instructions': len(records),
             'has_minor_execute': has_minor_execute[0],
             'observed_line_size': line_size,
             'unattributed_collisions': collision_unresolved[0],
+            'wrap_partner_not_found': wrap_partner_not_found[0],
         },
         'config_params': branch_pred_info,
         # Sorted base/name pairs, so the viewer can resolve a branch target to
@@ -947,9 +1056,15 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
 
 
 def _dc_miss(lsq_evt, dcache_by_cycle):
-    """Did this instruction's own DCache access miss? Matches on access
-    direction so a store sharing its issue cycle with a load cannot pick up
-    the load's result. Falls back to any access at that cycle."""
+    """Did this instruction's own DCache access miss?
+
+    Prefers accesses matching this instruction's direction, so a store
+    sharing its issue cycle with a load normally cannot pick up the load's
+    result. That is a preference, not a guarantee: when no same-direction
+    access exists at that cycle the `or evs` below takes any of them, which
+    is the case the preference is meant to exclude. Measured on daxpy the
+    fallback fires 0 times against 12,290 direction matches, so it has never
+    been exercised on this benchmark set."""
     if not lsq_evt or lsq_evt.get('issueCycle') is None:
         return None
     evs = dcache_by_cycle.get(lsq_evt['issueCycle'])
@@ -958,13 +1073,6 @@ def _dc_miss(lsq_evt, dcache_by_cycle):
     is_store = lsq_evt.get('isStore') is True
     matching = [e for e in evs if e['isWrite'] == is_store] or evs
     return any(e['miss'] for e in matching)
-
-
-def _dc_miss_store(lsq_evt, dcache_by_cycle):
-    # Used alongside dcMiss to pick the store-miss cell over the load-miss one.
-    if not lsq_evt:
-        return None
-    return True if lsq_evt.get('isStore') is True else None
 
 
 def parse_file(path, show_progress=True, tpc=None):
@@ -1061,7 +1169,8 @@ def main():
     md = data['metadata']
     print(f"[INFO] Wrote {out}")
     print(f"[INFO] {md['n_instructions']:,} instructions, "
-          f"clock period {md['clock_period_ps']} ps, "
+          f"clock period {md['clock_period_ticks']} ticks "
+          f"({md['tick_unit']} each), "
           f"forward delays {md['pipe_delays']['f1_f2']}/"
           f"{md['pipe_delays']['f2_dec']}/{md['pipe_delays']['dec_ex']}")
     print(f"[INFO] Total time {elapsed:.1f}s", file=sys.stderr)
