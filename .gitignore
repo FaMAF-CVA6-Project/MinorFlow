@@ -8,3 +8,6 @@ docs/CARLA2026/daxpy_validation/daxpy_trace.txt
 
 # Testing
 tests/*_trace*
+
+# make_oversized.py output
+oversized*.json
