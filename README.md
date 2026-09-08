@@ -17,13 +17,13 @@ Capture a trace from gem5:
 ```bash
 gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS \
          --debug-file=trace.txt \
-         gem5_config_MinorFlow.py <binary>
+         configs/gem5_config_MinorFlow.py <binary>
 ```
 
-Or let [`run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with those flags and report the metrics, all in one command:
+Or let [`scripts/run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with those flags and report the metrics, all in one command:
 
 ```bash
-python3 run_gem5.py gem5_config_MinorFlow.py daxpy.S
+python3 scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
 ```
 
 Convert the trace to JSON. The driver leaves a copy in `run_results/` next to itself, so that is the shortest path to it:
@@ -38,12 +38,12 @@ Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window.
 
 ### The sample trace
 
-The landing page offers a sample, and the button appears only when the sample is actually there, so it is never a dead end. It is not committed by default, because of its size. `make_sample.py` trims a full tracer JSON down to one:
+The landing page offers a sample, and the button appears only when the sample is actually there, so it is never a dead end. It is not committed by default, because of its size. `scripts/make_MinorFlow_sample.py` trims a full tracer JSON down to one:
 
 ```bash
-python3 make_sample.py daxpy.json                 # -> tests/daxpy.config1.{json,js}
-python3 make_sample.py daxpy.json -n 1500         # fewer instructions
-python3 make_sample.py daxpy.json --from 4000     # start past the set-up
+python3 scripts/make_MinorFlow_sample.py daxpy.json                 # -> tests/daxpy.config1.{json,js}
+python3 scripts/make_MinorFlow_sample.py daxpy.json -n 1500         # fewer instructions
+python3 scripts/make_MinorFlow_sample.py daxpy.json --from 4000     # start past the set-up
 ```
 
 ## Tracer options
@@ -62,21 +62,21 @@ python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet] [--tpc TICKS]
 
 The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds the records. Pass 1 stops once it has seen enough distinct ticks to settle the answer, so it costs a fraction of the file rather than all of it, and `--tpc` skips it entirely when the clock is already known.
 
-`tests/MinorFlow_create_all_jsons.py` converts a whole folder of traces at once, skipping the ones whose JSON is already newer, and lets the tracer's progress line through so a multi-gigabyte conversion does not look hung.
+`scripts/create_all_MinorFlow_jsons.py` converts a whole folder of traces at once, skipping the ones whose JSON is already newer, and lets the tracer's progress line through so a multi-gigabyte conversion does not look hung.
 
-## Running a test: `run_gem5.py`
+## Running a test: `scripts/run_gem5.py`
 
-Capturing a trace by hand means compiling the test against gem5's `m5op.S`, remembering the full debug-flag list, and then reading the numbers out of `stats.txt`. `run_gem5.py` does all of it in one command, and is how every trace in [tests/](tests/) was produced.
+Capturing a trace by hand means compiling the test against gem5's `m5op.S`, remembering the full debug-flag list, and then reading the numbers out of `stats.txt`. `scripts/run_gem5.py` does all of it in one command, and is how every trace in [tests/](tests/) was produced.
 
 Run it **from the gem5 root**: the script takes the current directory as the gem5 root and looks for `./build/RISCV/gem5.opt`, `./include` and `./util/m5/src/abi/riscv/m5op.S` from there.
 
 ```bash
-python3 run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
+python3 scripts/run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
 ```
 
 | Argument | Meaning |
 | --- | --- |
-| `<config>.py` | The gem5 MinorCPU configuration script, for example [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) |
+| `<config>.py` | The gem5 MinorCPU configuration script, for example [configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py) |
 | `<test>` | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension |
 | `--lang` | Force the type instead of detecting it |
 | `--build` | Which build to run: a directory name under `build/`, a path to one, or a path to the binary. Defaults to `RISCV` |
@@ -98,7 +98,7 @@ The test is compiled into the gem5 output folder rather than beside the source, 
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead. A **patched build adds a third, `NET (CVA6)`**.
 
-Which overhead table it subtracts is `--suite`. This repository's benchmarks and the CVA6 fork's calibration benchmarks use different test templates, so their scaffolding costs differ, and `run_gem5.py` is one file carrying both tables. It picks `viewer` here and `config` there from where it sits, prints the choice, and `--suite` overrides it.
+Which overhead table it subtracts is `--suite`. This repository's benchmarks and the CVA6 fork's calibration benchmarks use different test templates, so their scaffolding costs differ, and `scripts/run_gem5.py` is one file carrying both tables. It picks `viewer` here and `config` there from where it sits, prints the choice, and `--suite` overrides it.
 
 ### What a patched build adds
 
@@ -112,15 +112,15 @@ There are two forms, and accept-and-charge replaces blocking for **two causes on
 
 **Front-end hold.** With `fetch1WaitsForIcache` the fetch unit keeps its line at the instruction cache's ready line instead of sending into a refusal and paying the retry round trip, which is what CVA6 does. That moves the wait ahead of the request, so it is no longer the gap between `Fetch1 req` and `Fetch1 resp` that a stock build shows as `ICache stall (retry)`. The cycles are read from the held line itself and drawn before the request cell as `ICache stall (held)`, in the same colour, so the cost stays visible and lands where it is actually paid. A stock trace has no held lines and keeps its `(retry)` cells.
 
-**Return address stack.** `run_gem5.py` enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them. A squash that leaves a speculative push or pop standing, which is what `rasNoRecovery` transcribes, is marked `ras!`.
+**Return address stack.** `scripts/run_gem5.py` enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them. A squash that leaves a speculative push or pop standing, which is what `rasNoRecovery` transcribes, is marked `ras!`.
 
 The **Extra Info** panel adds a *Return address stack* section with the whole-trace picture the per-instruction markers cannot give: pushes and pops, the deepest the stack reached against its capacity, the depth left at the end, and how many operations squashes left unrepaired. A depth well above zero at the end on a balanced program is the signature of that last figure.
 
-A configuration script may define options of its own. Any flag `run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
+A configuration script may define options of its own. Any flag `scripts/run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
 
 ```bash
-python3 run_gem5.py my_config.py daxpy.S --some-config-flag
-python3 run_gem5.py my_config.py daxpy.S -- --some-config-flag   # when it takes a value
+python3 scripts/run_gem5.py my_config.py daxpy.S --some-config-flag
+python3 scripts/run_gem5.py my_config.py daxpy.S -- --some-config-flag   # when it takes a value
 ```
 
 The `--` form is the unambiguous one: use it for a flag that takes a value, or one whose name collides with `--lang` or `--no-trace`. Forwarded flags are echoed before the run, and if the configuration rejects them its own error comes back through.
@@ -129,9 +129,9 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 
 [benchmarks/](benchmarks/) holds the tests used to develop MinorFlow, and `test_template.c` and `test_template.S` are the starting points. The template sets up `gp`, calls `m5_reset_stats`, leaves a `MAIN PROGRAM` / `END OF MAIN PROGRAM` region for your code, and then calls `m5_dump_stats` and `m5_exit`. Write inside the markers and the driver measures and disassembles exactly that region.
 
-## Running the sweep: `run_MinorFlow_sweep.py`
+## Running the sweep: `scripts/run_MinorFlow_sweep.py`
 
-[gem5_config_MinorFlow.py](gem5_config_MinorFlow.py) is not one machine but seventeen. Set `TEST` to the one you want. `TEST 1` is the Reference Core, and every other entry perturbs one part of the pipeline so its effect is visible in the viewer, against the workload that shows it:
+[configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py) is not one machine but seventeen. Set `TEST` to the one you want. `TEST 1` is the Reference Core, and every other entry perturbs one part of the pipeline so its effect is visible in the viewer, against the workload that shows it:
 
 | # | What it changes | Workload |
 | --- | --- | --- |
@@ -153,10 +153,10 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 | 16 | `executeBranchDelay` 1 to 10 | branch_stress |
 | 17 | combination: 2-wide, L1I and L1D latency 3, forward delays 2, branch delay 5, 60 MHz | daxpy |
 
-`run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `run_gem5.py`:
+`scripts/run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `configs/gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `scripts/run_gem5.py`:
 
 ```bash
-python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
+python3 scripts/run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
 ```
 
 | Option | Meaning |
@@ -165,18 +165,18 @@ python3 run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME
 | `--tests-dir` | Where the workloads live. Defaults to `benchmarks/`, relative to the gem5 root |
 | `--tests` | Comma-separated workloads to run for every configuration, instead of the ones the table names |
 | `--out-dir` | Where results are collected. Defaults to `MinorFlow_sweep_results/` |
-| `--config` | Sweep a copy or a variant of `gem5_config_MinorFlow.py` instead |
+| `--config` | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead |
 | `--no-trace` | Metrics only, no traces |
 | `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds |
 | `--list` | Print the plan and exit, touching nothing |
 
-For each configuration it sets `TEST` and runs that entry's workloads through [`run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
+For each configuration it sets `TEST` and runs that entry's workloads through [`scripts/run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
 Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_report.config<N>.txt`, `<test>_stats.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from. Every metrics table is also gathered into one file in that folder, named after the run that produced it.
 
-Each run works in its own folder under `m5out/` and `run_results/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `run_gem5.py` run writes into them too.
+Each run works in its own folder under `m5out/` and `run_results/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `scripts/run_gem5.py` run writes into them too.
 
-The sweep never edits `gem5_config_MinorFlow.py`: it writes one temporary copy per configuration with `TEST` set, runs those, and deletes them at the end. So an interrupted sweep leaves nothing to restore, and two sweeps can run at once. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
+The sweep never edits `configs/gem5_config_MinorFlow.py`: it writes one temporary copy per configuration with `TEST` set, runs those, and deletes them at the end. So an interrupted sweep leaves nothing to restore, and two sweeps can run at once. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
 
 ## Why a separate tracer
 
@@ -238,7 +238,7 @@ gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decod
          gem5_config_Reference_Core.py <binary>
 ```
 
-It is the baseline of the sweep in [gem5_config_MinorFlow.py](gem5_config_MinorFlow.py), flattened into a standalone file: identical parameters, without the test table. Use the sweep instead when you want to perturb one part of the pipeline against this baseline.
+It is the baseline of the sweep in [configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py), flattened into a standalone file: identical parameters, without the test table. Use the sweep instead when you want to perturb one part of the pipeline against this baseline.
 
 If you use MinorFlow in academic work, please cite it. [CITATION.cff](CITATION.cff) carries the metadata for both the software and the paper.
 
@@ -250,25 +250,46 @@ Both come out of an undergraduate thesis at FaMAF, Universidad Nacional de Córd
 
 ## Cleaning up
 
-`clean_MinorFlow_repo.py` deletes what a run leaves in this repository: every `.list`, `.vcd`, `.fst` and gem5 debug trace, and every `__pycache__`.
+`scripts/clean_MinorFlow_repo.py` deletes what a run leaves in this repository: every `.list`, `.vcd`, `.fst` and gem5 debug trace, and every `__pycache__`.
 
 ```bash
-python3 clean_MinorFlow_repo.py [-y] [--dry-run] [-v]
+python3 scripts/clean_MinorFlow_repo.py [-y] [--dry-run] [-v]
 ```
 
-`clean_gem5_runs.py` is the other one, and clears a gem5 tree rather than this repository: `m5out/`, `batch_results/`, the sweep result folders and the `run_results/` beside each runner. The names say which tree each one touches.
+`scripts/clean_gem5_runs.py` is the other one, and clears a gem5 tree rather than this repository: `m5out/`, `batch_results/`, the sweep result folders and the `run_results/` beside each runner. The names say which tree each one touches.
 
 It lists what it found with its size and asks before deleting. The viewer JSONs are left alone and `docs/` is kept whole, since the CARLA 2026 daxpy validation under it is the evidence behind the paper.
 
 ### Oversized JSONs
 
-A tracer JSON is never deleted, since it is what the viewer reads, but a long run makes one too big to commit: GitHub warns above 50 MiB and refuses above 100 MiB, and git matches a path and never a size. `ignore_big_json.py` measures the JSONs and the `.js` wrappers in this repository and writes the oversized ones into a block of `.gitignore` that it owns.
+A tracer JSON is never deleted, since it is what the viewer reads, but a long run makes one too big to commit: GitHub warns above 50 MiB and refuses above 100 MiB, and git matches a path and never a size. `scripts/ignore_big_MinorFlow_jsons.py` measures the JSONs and the `.js` wrappers in this repository and writes the oversized ones into a block of `.gitignore` that it owns.
 
 ```bash
-python3 ignore_big_json.py [-y] [--dry-run] [-v] [-l MIB] [--prune]
+python3 scripts/ignore_big_MinorFlow_jsons.py [-y] [--dry-run] [-v] [-l MIB] [--prune]
 ```
 
 It only ever adds, so a second run changes nothing. `--prune` drops the entries whose file has gone or shrunk, and `-l` sets a different threshold in MiB. A file git already tracks is reported rather than ignored.
+
+## Oversized traces: `scripts/make_MinorFlow_oversized.py`
+
+The viewer refuses a trace past `MAX_JSON_BYTES` (500 MiB) or `MAX_STREAM_INSTRUCTIONS` (500,000 records) and offers the range prompt instead. `scripts/make_MinorFlow_oversized.py` builds a file past both, so that path can be exercised without waiting for a run large enough to produce one:
+
+```bash
+python3 scripts/make_MinorFlow_oversized.py tests/daxpy.json          # ~600k records
+python3 scripts/make_MinorFlow_oversized.py tests/daxpy.json --mib 700
+```
+
+It repeats a real trace with every cycle field shifted forward rather than fabricating records, so what the viewer refuses is the size and never the shape. The output is gitignored.
+
+## Checking the repository: `scripts/check_MinorFlow_repo.py`
+
+Every script compiles and answers `--help`, the page's JavaScript parses, the cycle-field lists agree across the tracer's consumers, every relative link resolves, and nothing gained trailing whitespace or a missing final newline:
+
+```bash
+python3 scripts/check_MinorFlow_repo.py
+python3 scripts/check_MinorFlow_repo.py --list        # name the checks and stop
+python3 scripts/check_MinorFlow_repo.py -k formatting # just one
+```
 
 ## Licence
 
