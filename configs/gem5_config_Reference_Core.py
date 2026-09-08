@@ -29,8 +29,8 @@ from m5.objects import (  # type: ignore
 )
 
 # Reference Core used in the CARLA 2026 paper, "MinorFlow: A gem5 Pipeline
-# Visualizer for Teaching Computer Architecture". A single-issue in-order 
-# 64-bit RISC-V MinorCPU at 100 MHz with a 16 KiB L1I, a 32 KiB L1D and a 
+# Visualizer for Teaching Computer Architecture". A single-issue in-order
+# 64-bit RISC-V MinorCPU at 100 MHz with a 16 KiB L1I, a 32 KiB L1D and a
 # local branch predictor, matching Table 1 of the paper.
 
 L1I_SIZE = "16KiB"
