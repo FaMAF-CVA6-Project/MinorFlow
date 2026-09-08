@@ -11,3 +11,6 @@ tests/*_trace*
 
 # make_oversized.py output
 oversized*.json
+
+# Configs from the main thesis repo
+configs/CVA6
