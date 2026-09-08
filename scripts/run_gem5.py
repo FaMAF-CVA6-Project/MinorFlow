@@ -7,6 +7,7 @@ detected from the extension and can be forced with --lang.
 import sys
 import os
 import shutil
+import hashlib
 import subprocess
 import re
 import argparse
@@ -43,6 +44,12 @@ GEM5_BINARY_NAMES = ("gem5.opt", "gem5.fast", "gem5.debug")
 # a patched build from a stock one. Checked before every run, because the two
 # are told apart by nothing else once they are built.
 PATCH_MARKER = b"Axi2MemPort"
+
+# The patch a run was built from. The image records the hash of the patch it
+# applied, so a table says which transcription produced it and an edited but
+# unrebuilt patch is caught before the numbers are believed.
+PATCH_FILE = os.path.join(GEM5_ROOT, "MinorCPU_CVA6.patch")
+BUILT_PATCH_HASH = os.path.join(GEM5_ROOT, ".built_patch_sha1")
 M5_INCLUDE = os.path.join(GEM5_ROOT, "include")
 M5_OP_ASM = os.path.join(GEM5_ROOT, "util/m5/src/abi/riscv/m5op.S")
 
@@ -182,11 +189,24 @@ OVERHEAD_SUITES = {
 UNCALIBRATED = {}
 
 
-def default_suite():
-    """Which overhead table this copy of the script subtracts by default."""
+def default_suite(src_file=None):
+    """Which overhead table to subtract, decided by where the test came from.
+
+    The driver has one home now, in the viewer repository, and runs both the
+    viewer's teaching set and the fork's calibration set, so its own location
+    no longer says which table applies. The test's path does. The fallback is
+    for the image, where the driver sits beside the set it runs."""
+    if src_file:
+        parts = os.path.abspath(src_file).split(os.sep)
+        if "gem5_config_CVA6" in parts:
+            return "config"
+        if "MinorFlow" in parts:
+            return "viewer"
     here = os.path.dirname(os.path.abspath(__file__))
-    page = os.path.join(here, "MinorFlow.html")
-    return "viewer" if os.path.isfile(page) else "config"
+    for base in (here, os.path.dirname(here)):
+        if os.path.isfile(os.path.join(base, "MinorFlow.html")):
+            return "viewer"
+    return "config"
 
 
 # ==============================================================================
@@ -447,6 +467,25 @@ def build_is_patched(path):
                 tail = chunk[-overlap:]
     except OSError:
         return None
+
+
+def patch_fingerprint():
+    """(built, current) short hashes of the patch, either possibly None.
+
+    'built' is what the image recorded when it applied the patch, 'current' is
+    the file sitting there now."""
+    def read_hash(path, hasher):
+        try:
+            with open(path, "rb") as handle:
+                return hasher(handle)
+        except OSError:
+            return None
+
+    built = read_hash(BUILT_PATCH_HASH,
+                      lambda h: h.read().decode().split()[0][:12] or None)
+    current = read_hash(PATCH_FILE,
+                        lambda h: hashlib.sha1(h.read()).hexdigest()[:12])
+    return built, current
 
 
 def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
@@ -767,12 +806,11 @@ if __name__ == "__main__":
                         help="Force the input type and overhead profile. "
                              "Defaults to detection by extension.")
     parser.add_argument("--suite", choices=sorted(OVERHEAD_SUITES),
-                        default=default_suite(),
-                        help=f"Which overhead table to subtract. 'config' is "
-                             f"the calibration benchmarks, 'viewer' the "
-                             f"MinorFlow teaching set. Defaults to "
-                             f"{default_suite()} here, from where this script "
-                             f"sits")
+                        default=None,
+                        help="Which overhead table to subtract. 'config' is "
+                             "the calibration benchmarks, 'viewer' the "
+                             "MinorFlow teaching set. Defaults to "
+                             "the folder the test came from")
     parser.add_argument("--variant", choices=sorted(GEM5_BUILDS),
                         default=DEFAULT_VARIANT,
                         help=f"Which build to run and whose overhead profile "
@@ -802,6 +840,10 @@ if __name__ == "__main__":
 
     own_argv, after_separator = split_own_args(sys.argv[1:])
     args, unrecognised = parser.parse_known_args(own_argv)
+    # Resolved here rather than as an argparse default: it
+    # reads the test's path, which is not known until now.
+    if args.suite is None:
+        args.suite = default_suite(args.src_file)
     config_args = unrecognised + after_separator
 
     config_file = args.config_file
@@ -871,6 +913,13 @@ if __name__ == "__main__":
         [os.path.basename(config_file)] + list(config_args))
     # Both on the header, so a gathered metrics file says what produced it.
     build_label = f"{gem5_bin}  (overhead: {args.suite}/{args.variant}/{lang})"
+    built_patch, current_patch = patch_fingerprint()
+    if built_patch:
+        build_label += f"  (patch {built_patch})"
+    if built_patch and current_patch and built_patch != current_patch:
+        print(f"[WARN] {PATCH_FILE} is now {current_patch}, but this gem5 was "
+              f"built from {built_patch}. Rebuild the image, or the run does "
+              f"not carry the patch you are reading.")
     header = build_table_header(f"gem5 [{args.variant}]", config_label,
                                 os.path.basename(src_file), geometry,
                                 build_label)

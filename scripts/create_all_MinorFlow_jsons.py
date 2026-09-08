@@ -5,10 +5,10 @@ Names the output after the input with '_trace' removed, so
 daxpy_trace.config1.txt becomes daxpy.config1.json, which is what the sweep's
 collected files and the viewer's sample name both expect.
 
-    python3 MinorFlow_create_all_jsons.py            # this script's folder
-    python3 MinorFlow_create_all_jsons.py ../run_results
-    python3 MinorFlow_create_all_jsons.py -j 8
-    python3 MinorFlow_create_all_jsons.py --force    # redo existing JSONs
+    python3 scripts/create_all_MinorFlow_jsons.py        # the whole repository
+    python3 scripts/create_all_MinorFlow_jsons.py run_results
+    python3 scripts/create_all_MinorFlow_jsons.py -j 8
+    python3 scripts/create_all_MinorFlow_jsons.py --force    # redo existing JSONs
 """
 import argparse
 import os
@@ -17,11 +17,16 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# The tracer, resolved from this file rather than from the working directory,
-# so the script runs from anywhere.
+# This script belongs to the MinorFlow repository and works inside it only.
+# The fork's own traces are handled by scripts/create_all_repo_jsons.py, which
+# walks the whole checkout and calls this one for the submodule.
 HERE = os.path.dirname(os.path.abspath(__file__))
-TRACER = os.path.join(HERE, os.pardir, "MinorFlow_tracer.py")
+REPO_ROOT = os.path.dirname(HERE)
+TRACER = os.path.join(REPO_ROOT, "MinorFlow_tracer.py")
 
+# Traces are read at a few tens of MB/s each and a large one holds a lot of
+# state, so this is deliberately below the core count. Each worker only waits
+# on a subprocess, which is why these are threads rather than processes.
 DEFAULT_WORKERS = 4
 
 TRACE_MARK = "_trace"
@@ -39,6 +44,9 @@ def run_one(trace, out_json, quiet):
     if quiet:
         cmd.append("--quiet")
     start = time.time()
+    # Output is not captured: the tracer's progress line is the only sign of
+    # life on a trace that takes minutes, and swallowing it left the batch
+    # looking hung.
     code = subprocess.run(cmd).returncode
     took = time.time() - start
     name = os.path.basename(out_json)
@@ -52,7 +60,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run MinorFlow_tracer.py over every gem5 trace in a "
                     "folder.")
-    parser.add_argument("folder", nargs="?", default=HERE,
+    parser.add_argument("folder", nargs="?", default=REPO_ROOT,
                         help="Folder holding the traces. Defaults to the one "
                              "this script sits in")
     parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_WORKERS,
@@ -69,8 +77,8 @@ def main():
     args = parser.parse_args()
 
     if not os.path.isfile(TRACER):
-        print(f"[ERROR] Tracer not found at {TRACER}. This script expects to "
-              f"sit in tests/ inside the MinorFlow repository.")
+        print(f"[ERROR] No {TRACER}. This script runs inside the "
+              f"MinorFlow repository, beside its tracer.")
         return 2
     if not os.path.isdir(args.folder):
         print(f"[ERROR] {args.folder} is not a folder")

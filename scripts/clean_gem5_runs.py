@@ -41,8 +41,8 @@ PRUNE_DIRS = {".git", "build", "vendor", "node_modules", "install", "work-ver"}
 
 def repo_root():
     """The repository this script sits in, found by walking up to the nearest
-    .git rather than counting directory levels.
-    """
+    .git. The script lives in scripts/, so counting parents would be one more
+    thing to fix the next time the tree moves."""
     here = os.path.dirname(os.path.abspath(__file__))
     path = here
     while True:
