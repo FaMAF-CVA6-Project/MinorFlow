@@ -320,7 +320,8 @@ class CacheHierarchy(PrivateL1CacheHierarchy):
             self.l1dcaches[i].writeback_clean = False
             self.l1dcaches[i].prefetcher = NULL
 
-            # Per-test overrides are applied last so they win over the defaults.
+            # Per-test overrides are applied last so they win over the
+            # defaults.
             for key, value in self._icache_overrides.items():
                 setattr(self.l1icaches[i], key, value)
             for key, value in self._dcache_overrides.items():
