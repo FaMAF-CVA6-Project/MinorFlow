@@ -189,24 +189,91 @@ OVERHEAD_SUITES = {
 UNCALIBRATED = {}
 
 
+def resolve_input(path):
+    """A config or test path, resolved against the gem5 root and then against
+    this script's own repository.
+
+    The script has to run from the gem5 root, because that is where gem5's
+    build/, include/ and m5op.S are."""
+    if not path or os.path.exists(path):
+        return path
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(here)
+    for base in (repo, here):
+        candidate = os.path.join(base, path)
+        if os.path.exists(candidate):
+            return candidate
+        # Also try the bare name inside the repository's usual folders, so
+        # 'daxpy.S' finds benchmarks/daxpy.S the way the READMEs write it.
+        for sub in ("benchmarks", "configs"):
+            candidate = os.path.join(base, sub, os.path.basename(path))
+            if os.path.exists(candidate):
+                return candidate
+    return path
+
+
+# A one-line file in a benchmark directory naming the overhead suite its
+# programs belong to.
+SUITE_MARKER = ".overhead_suite"
+
+
+def read_suite_marker(src_file):
+    """The suite declared beside the test, or None.
+
+    Looks in the test's own directory and the two above it, so a benchmark in
+    a subdirectory still finds its set's marker."""
+    if not src_file:
+        return None
+    d = os.path.dirname(os.path.abspath(src_file))
+    for _ in range(3):
+        marker = os.path.join(d, SUITE_MARKER)
+        if os.path.isfile(marker):
+            try:
+                with open(marker) as f:
+                    name = f.read().strip()
+            except OSError:
+                return None
+            if name in OVERHEAD_SUITES:
+                return name
+            print(f"[WARN] {marker} names '{name}', which is not one of "
+                  f"{sorted(OVERHEAD_SUITES)}. Ignoring it.")
+            return None
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
 def default_suite(src_file=None):
     """Which overhead table to subtract, decided by where the test came from.
 
-    The driver has one home now, in the viewer repository, and runs both the
-    viewer's teaching set and the fork's calibration set, so its own location
-    no longer says which table applies. The test's path does. The fallback is
-    for the image, where the driver sits beside the set it runs."""
+    The suite decides which fixed instrumentation overhead is subtracted from
+    every reported cycle count. The path heuristics below are the fallback
+    for a tree with no marker."""
+    named = read_suite_marker(src_file)
+    if named:
+        return named
+    guess = None
     if src_file:
         parts = os.path.abspath(src_file).split(os.sep)
         if "gem5_config_CVA6" in parts:
-            return "config"
-        if "MinorFlow" in parts:
-            return "viewer"
-    here = os.path.dirname(os.path.abspath(__file__))
-    for base in (here, os.path.dirname(here)):
-        if os.path.isfile(os.path.join(base, "MinorFlow.html")):
-            return "viewer"
-    return "config"
+            guess = "config"
+        elif "MinorFlow" in parts:
+            guess = "viewer"
+    if guess is None:
+        here = os.path.dirname(os.path.abspath(__file__))
+        for base in (here, os.path.dirname(here)):
+            if os.path.isfile(os.path.join(base, "MinorFlow.html")):
+                guess = "viewer"
+                break
+    if guess is None:
+        guess = "config"
+    print(f"[WARN] No {SUITE_MARKER} beside the test, so the overhead table "
+          f"was inferred as '{guess}' from the path. This decides what is "
+          f"subtracted from every cycle count: pass --suite to say which one, "
+          f"or drop a {SUITE_MARKER} file naming it beside the benchmarks.")
+    return guess
 
 
 # ==============================================================================
@@ -840,14 +907,19 @@ if __name__ == "__main__":
 
     own_argv, after_separator = split_own_args(sys.argv[1:])
     args, unrecognised = parser.parse_known_args(own_argv)
+    config_args = unrecognised + after_separator
+
+    # Paths first. Both the suite marker and the error messages below want
+    # the resolved path, not the one typed: the marker sits beside the test
+    # in its own repository, which is not where the gem5 root is.
+    config_file = resolve_input(args.config_file)
+    src_file = resolve_input(args.src_file)
+    args.config_file, args.src_file = config_file, src_file
+
     # Resolved here rather than as an argparse default: it
     # reads the test's path, which is not known until now.
     if args.suite is None:
-        args.suite = default_suite(args.src_file)
-    config_args = unrecognised + after_separator
-
-    config_file = args.config_file
-    src_file = args.src_file
+        args.suite = default_suite(src_file)
 
     if not os.path.exists(config_file):
         print(f"[ERROR] The configuration file '{config_file}' does not exist")
