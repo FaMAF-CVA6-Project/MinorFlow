@@ -1,0 +1,20 @@
+Third-party files in this directory
+===================================
+
+The repository's MIT LICENSE at the root does NOT cover the two files below.
+They are Springer Nature's, redistributed here unmodified so the paper sources
+in this directory build, and they stay under Springer's own terms.
+
+  llncs.cls       The Lecture Notes in Computer Science LaTeX document class.
+                  Copyright Springer Nature. Provided by Springer for preparing
+                  LNCS submissions and governed by the terms Springer publishes
+                  with it, not by this repository's licence.
+
+  splncs04.bst    The matching BibTeX style. Same origin and same terms.
+
+Both are obtainable from Springer's authors' page for LNCS:
+https://www.springernature.com/gp/computer-science/lncs/conference-proceedings-guidelines
+
+Everything else in this directory, the paper's own .tex sources, figures and
+bibliography, is the FaMAF CVA6 Project's work and is covered by the
+repository's MIT LICENSE.

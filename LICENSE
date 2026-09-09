@@ -1,3 +1,12 @@
+Note on third-party files
+-------------------------
+
+This licence covers the work in this repository, with one exception, recorded
+in docs/CARLA2026/latex/LICENSE.third-party: docs/CARLA2026/latex/llncs.cls and
+docs/CARLA2026/latex/splncs04.bst are Springer Nature's LaTeX class and BibTeX
+style, redistributed unmodified so the paper sources build, and they remain
+under Springer's own terms.
+
 MIT License
 
 Copyright (c) 2026 FaMAF CVA6 Project
