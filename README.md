@@ -20,11 +20,14 @@ gem5.opt --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decod
          configs/gem5_config_MinorFlow.py <binary>
 ```
 
-Or let [`scripts/run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with those flags and report the metrics, all in one command:
+Or let [`scripts/run_gem5.py`](#running-a-test-run_gem5py) compile the test, run it with those flags and report the metrics, all in one command. Run it **from your gem5 root**, giving the path to this repository's copy of the script:
 
 ```bash
-python3 scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
+cd /path/to/gem5
+python3 /path/to/MinorFlow/scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
 ```
+
+The current directory has to be the gem5 root, because that is where the script reads `build/`, `include/` and `util/m5/src/abi/riscv/m5op.S`.
 
 Convert the trace to JSON. The driver leaves a copy in `run_results/` next to itself, so that is the shortest path to it:
 
@@ -59,6 +62,7 @@ python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet] [--tpc TICKS]
 | `--stats` | Print a summary of committed and flushed instructions plus instruction-cache activity |
 | `--quiet` | Suppress the progress output |
 | `--tpc` | Ticks per CPU cycle, skipping the detection pass. 20000 at 50 MHz on gem5's default tick rate |
+| `--strict` | Exit non-zero (3) if any mechanism failed to resolve, which is what a trace captured without one of the debug-flag line families looks like. The JSON is still written, and `metadata.degraded` names what is missing. Use it in batch runs so a degraded trace is not mistaken for a complete one |
 
 The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds the records. Pass 1 stops once it has seen enough distinct ticks to settle the answer, so it costs a fraction of the file rather than all of it, and `--tpc` skips it entirely when the clock is already known.
 
@@ -68,10 +72,10 @@ The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds
 
 Capturing a trace by hand means compiling the test against gem5's `m5op.S`, remembering the full debug-flag list, and then reading the numbers out of `stats.txt`. `scripts/run_gem5.py` does all of it in one command, and is how every trace in [tests/](tests/) was produced.
 
-Run it **from the gem5 root**: the script takes the current directory as the gem5 root and looks for `./build/RISCV/gem5.opt`, `./include` and `./util/m5/src/abi/riscv/m5op.S` from there.
+Run it **from the gem5 root**: the script takes the current directory as the gem5 root and looks for `./build/RISCV/gem5.opt`, `./include` and `./util/m5/src/abi/riscv/m5op.S` from there. The script itself can live anywhere, and so can the config and the test: both are looked for relative to the gem5 root first and then relative to this repository, so a path that is right in the clone works from the gem5 root too.
 
 ```bash
-python3 scripts/run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
+python3 /path/to/MinorFlow/scripts/run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
 ```
 
 | Argument | Meaning |
@@ -98,7 +102,7 @@ The test is compiled into the gem5 output folder rather than beside the source, 
 
 The table has an `OFFICIAL` and a `NET` column. `NET` subtracts a fixed instrumentation overhead. A **patched build adds a third, `NET (CVA6)`**.
 
-Which overhead table it subtracts is `--suite`. This repository's benchmarks and the CVA6 fork's calibration benchmarks use different test templates, so their scaffolding costs differ, and `scripts/run_gem5.py` is one file carrying both tables. It picks `viewer` here and `config` there from where it sits, prints the choice, and `--suite` overrides it.
+Which overhead table it subtracts is `--suite`. This repository's benchmarks and the CVA6 fork's calibration benchmarks use different test templates, so their scaffolding costs differ, and `scripts/run_gem5.py` is one file carrying both tables. It reads the choice from a one-line `.overhead_suite` file beside the benchmarks, which says `viewer` here and `config` in the fork, prints the choice, and `--suite` overrides it. With no marker it falls back to guessing from the path and says so.
 
 ### What a patched build adds
 
@@ -162,7 +166,7 @@ python3 scripts/run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--bu
 | Option | Meaning |
 | --- | --- |
 | `--configs` | Which configurations to run, for example `1,4-6`. Defaults to every one in the table |
-| `--tests-dir` | Where the workloads live. Defaults to `benchmarks/`, relative to the gem5 root |
+| `--tests-dir` | Where the workloads live. With no value, `MinorFlow_benchmarks/` then `benchmarks/` are looked for in the current directory and beside this repository, in that order |
 | `--tests` | Comma-separated workloads to run for every configuration, instead of the ones the table names |
 | `--out-dir` | Where results are collected. Defaults to `MinorFlow_sweep_results/` |
 | `--config` | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead |
