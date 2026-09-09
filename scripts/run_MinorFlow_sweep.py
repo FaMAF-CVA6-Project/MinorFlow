@@ -19,7 +19,7 @@ import time
 # CONFIGURATION
 # ==============================================================================
 DEFAULT_CONFIG = "gem5_config_MinorFlow.py"
-DEFAULT_TESTS_DIR = "MinorFlow_benchmarks"
+DEFAULT_TESTS_DIRS = ("MinorFlow_benchmarks", "benchmarks")
 DEFAULT_OUT_DIR = "MinorFlow_sweep_results"
 
 RUNNER_NAME = "run_gem5.py"
@@ -90,6 +90,24 @@ def find_beside_script(name, what, extra=()):
     print(f"[ERROR] {what} ({name}) not found next to this script or in the "
           f"current directory.")
     sys.exit(2)
+
+
+def find_tests_dir(given):
+    """The folder holding the workloads.
+
+    An explicit --tests-dir wins and is returned as given, so a wrong one
+    still produces the error naming it"""
+    if given:
+        return given
+    here = os.path.dirname(os.path.abspath(__file__))
+    for root in (os.getcwd(), os.path.dirname(here), here):
+        for name in DEFAULT_TESTS_DIRS:
+            candidate = os.path.join(root, name)
+            if os.path.isdir(candidate):
+                return candidate
+    # Nothing found. Return the first name so the existing error message
+    # names something concrete rather than an empty string.
+    return DEFAULT_TESTS_DIRS[0]
 
 
 def find_gem5_builds():
@@ -486,9 +504,12 @@ def main():
     parser.add_argument("--configs", default="",
                         help="Which configurations to run, e.g. '1,4-6'. "
                              "Defaults to all of them")
-    parser.add_argument("--tests-dir", default=DEFAULT_TESTS_DIR,
-                        help=f"Folder holding the workloads. Defaults to "
-                             f"{DEFAULT_TESTS_DIR}/")
+    parser.add_argument("--tests-dir", default=None,
+                        help="Folder holding the workloads. When not given, "
+                             + " or ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
+                             + " is looked for in the current directory and "
+                             "beside this script's repository, in that "
+                             "order")
     parser.add_argument("--tests", default="",
                         help="Comma-separated workloads to run for every "
                              "configuration, instead of the ones the table "
@@ -546,10 +567,9 @@ def main():
     config_path = (os.path.abspath(args.config) if args.config
                    else find_beside_script(
                        DEFAULT_CONFIG, "Sweep config",
-                       # In the repository the config lives with the viewer it
-                       # belongs to, two levels up from here.
-                       extra=[os.path.join("..", "..", "viewers",
-                                           "MinorFlow")]))
+                       extra=[os.path.join("..", "configs"),
+                              os.path.join("..", "..", "viewers",
+                                           "MinorFlow", "configs")]))
     if not os.path.isfile(config_path):
         print(f"[ERROR] The configuration file '{config_path}' does not exist")
         sys.exit(2)
@@ -566,6 +586,9 @@ def main():
     config_ids = parse_config_selection(args.configs, table)
     override_tests = [t.strip() for t in args.tests.split(",") if t.strip()]
     all_tests = override_tests if override_tests else resolve_all(table)
+    # Resolved once, here, so every later use and every printed path is the
+    # folder actually being read.
+    args.tests_dir = find_tests_dir(args.tests_dir)
 
     print(SEP)
     print("MINORFLOW SWEEP")
