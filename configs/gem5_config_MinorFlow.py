@@ -48,6 +48,32 @@ TWO_WIDE = {
 
 SLOW_CACHE = {"tag_latency": 3, "data_latency": 3, "response_latency": 3}
 
+# The sweep table, in the machine-readable form run_MinorFlow_sweep.py parses.
+# One row per entry, as '#   <id>   <what it changes>   workload: <names>'.
+# Keep each row on one line: the parser appends a continuation line to the end
+# of the row, which is after 'workload:', so a wrapped row swallows the
+# continuation into the workload name and resolves nothing. TESTS below is
+# where a longer description belongs.
+# 'all' means every workload named anywhere in this table.
+#
+#   1   adopted baseline                          workload: all
+#   2   fetch2ToDecodeForwardDelay 1 -> 2         workload: daxpy
+#   3   decodeToExecuteForwardDelay 1 -> 2        workload: daxpy
+#   4   fetch1LineWidth and snap 4 -> 16          workload: icache_hit_loop
+#   5   fetch1FetchLimit 1 -> 4, L1I 16K -> 2K    workload: icache_hit_loop
+#   6   fetch2InputBufferSize 3 -> 6              workload: int_loop
+#   7   decodeInputBufferSize 4 -> 8              workload: int_loop
+#   8   executeInputBufferSize 8 -> 3             workload: int_loop
+#   9   dual issue, 2-wide                        workload: matrix_mul
+#  10   executeCommitLimit 2 -> 1, 2-wide pipe    workload: matrix_mul
+#  11   branchPred LocalBP -> TournamentBP        workload: branch_stress
+#  12   L1D access latency 1 -> 3                 workload: dcache_hit_loop
+#  13   executeLSQStoreBufferSize 16 -> 2         workload: stream_store
+#  14   baseline at 47 MHz, clock only            workload: int_loop
+#  15   L1I access latency 1 -> 3                 workload: icache_hit_loop
+#  16   executeBranchDelay 1 -> 10                workload: branch_stress
+#  17   combination, 2-wide and slow, 60 MHz      workload: daxpy
+
 TESTS = {
     1:  ("baseline",                           {}, "16KiB", "32KiB", {}, {}, "100MHz"),
     2:  ("fetch2ToDecodeForwardDelay 1->2",    {"fetch2ToDecodeForwardDelay": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
