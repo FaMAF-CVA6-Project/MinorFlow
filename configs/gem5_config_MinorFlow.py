@@ -48,13 +48,13 @@ TWO_WIDE = {
 
 SLOW_CACHE = {"tag_latency": 3, "data_latency": 3, "response_latency": 3}
 
-# The sweep table, in the machine-readable form run_MinorFlow_sweep.py parses.
-# One row per entry, as '#   <id>   <what it changes>   workload: <names>'.
-# Keep each row on one line: the parser appends a continuation line to the end
-# of the row, which is after 'workload:', so a wrapped row swallows the
-# continuation into the workload name and resolves nothing. TESTS below is
-# where a longer description belongs.
-# 'all' means every workload named anywhere in this table.
+# The sweep table run_MinorFlow_sweep.py parses. One row per entry, as
+# '#   <id>   <what it changes>   workload: <names>', where 'all' means every
+# workload named in the table. A longer description belongs in TESTS below.
+#
+# Keep each row on one line. The parser appends a continuation to the end of
+# the row, which is after 'workload:', so a wrapped row swallows it into the
+# workload name and resolves nothing.
 #
 #   1   adopted baseline                          workload: all
 #   2   fetch2ToDecodeForwardDelay 1 -> 2         workload: daxpy
@@ -354,7 +354,8 @@ class CacheHierarchy(PrivateL1CacheHierarchy):
                 setattr(self.l1dcaches[i], key, value)
 
 
-parser = argparse.ArgumentParser(description="RISC-V Reference Core sweep on gem5")
+parser = argparse.ArgumentParser(
+    description="RISC-V Reference Core sweep on gem5")
 parser.add_argument("binary", type=str,
                     help="Path to the compiled RISC-V ELF binary")
 args = parser.parse_args()
