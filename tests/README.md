@@ -6,12 +6,12 @@ Nothing here is tracked. gem5 debug traces run to gigabytes and their JSONs to h
 
 ## What lands here
 
-| File | Made by |
-| --- | --- |
-| `<name>_trace.txt` | `scripts/run_gem5.py`, copied from `run_results/` |
-| `<name>.json` | `MinorFlow_tracer.py`, or `scripts/create_all_MinorFlow_jsons.py` over a folder of traces |
+| File                                     | Made by                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `<name>_trace.txt`                       | `scripts/run_gem5.py`, copied from `run_results/`                                                                                    |
+| `<name>.json`                            | `MinorFlow_tracer.py`, or `scripts/create_all_MinorFlow_jsons.py` over a folder of traces                                            |
 | `daxpy.config1.json`, `daxpy.config1.js` | `scripts/make_MinorFlow_sample.py`. This pair is the sample `MinorFlow.html` loads when opened with no file, under exactly this name |
-| `oversized*.json` | `scripts/make_MinorFlow_oversized.py`, for testing the viewer's record ceiling |
+| `oversized*.json`                        | `scripts/make_MinorFlow_oversized.py`, for testing the viewer's record ceiling                                                       |
 
 ## Filling it
 
