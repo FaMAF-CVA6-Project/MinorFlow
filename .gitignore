@@ -5,6 +5,7 @@ __pycache__
 
 # CARLA
 docs/CARLA2026/daxpy_validation/daxpy_trace.txt
+docs/CARLA2026/MinorFlow_Final_Submission.zip
 
 # Testing
 tests/*_trace*
