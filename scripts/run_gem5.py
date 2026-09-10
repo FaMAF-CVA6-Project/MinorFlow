@@ -86,9 +86,8 @@ ERROR_TAIL_LINES = 40
 # OVERHEAD PROFILES
 # ==============================================================================
 # Scaffolding around the measured region, subtracted to get NET. Indexed by
-# suite, build and language. 'config' is the calibration set in
-# benchmarks/gem5/, 'viewer' the teaching set in MinorFlow: different
-# templates, so the tables are not interchangeable.
+# suite, build and language. 'config' is the set in benchmarks/gem5/, 'viewer'
+# the teaching set: different templates, so the two are not interchangeable.
 OVERHEAD_SUITES = {
     "config": {
         "patch": {
