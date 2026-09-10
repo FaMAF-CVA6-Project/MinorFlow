@@ -216,10 +216,10 @@ Keys: `+` and `-` to zoom, arrows to navigate, `Home` and `End` to jump.
 - A **ready-to-use Docker image** with gem5 already built, so you can produce traces without compiling anything:
 
 ```bash
-docker pull manuel313/gem5_v25
+docker pull famafcva6/gem5
 ```
 
-Image: https://hub.docker.com/repository/docker/manuel313/gem5_v25/general
+Image: https://hub.docker.com/r/famafcva6/gem5
 
 ## Requirements
 
