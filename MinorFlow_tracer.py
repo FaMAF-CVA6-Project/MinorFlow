@@ -25,7 +25,8 @@ RE_BP = re.compile(
     r'size|global counter bits|choice predictor size|choice counter bits|'
     r'instruction shift amount|index mask|BTB entries|RAS size):\s+(\S+)')
 RE_MINORLINE = re.compile(
-    r'fetch1: MinorLine: id=\S+/\S+/(\d+)\s+size=(\d+)\s+vaddr=0x([0-9a-f]+)')
+    r'fetch1: MinorLine: id=\S+/\S+/(\d+)\s+size=(\d+)\s+vaddr=0x([0-9a-f]+)'
+    r'(?:\s+paddr=0x([0-9a-f]+))?')
 RE_FETCHREQ = re.compile(r'fetch1: Issued fetch request to memory: (\S+)')
 RE_FETCHRETRY = re.compile(r'fetch1: recvRetry\b')
 RE_FETCHHELD = re.compile(r'fetch1: Line fetch held, icache busy: (\S+)')
@@ -34,8 +35,11 @@ RE_ID_LINE = re.compile(r'\d+/\S+/(\d+)')                       # -> lineSeq
 RE_ID_FULL = re.compile(r'(\d+)/\S+/(\d+)/(\d+)\.\d+')
 # decoder/passing (no .exec)
 RE_ID_F2 = re.compile(r'(\d+)/\S+/(\d+)/(\d+)')
+# A configuration that renames its caches matches nothing here. The family
+# census in parse() keys on the same prefixes, so that reaches
+# metadata.degraded rather than reading as a measured zero.
 RE_ICACHE = re.compile(
-    r'l1icaches: access for \w+ \[[0-9a-f]+:[0-9a-f]+\] IF (miss|hit)')
+    r'l1icaches: access for \w+ \[([0-9a-f]+):[0-9a-f]+\] IF (miss|hit)')
 RE_DCACHE = re.compile(
     r'l1dcaches: access for (\w+) \[[0-9a-f]+:[0-9a-f]+\] (miss|hit)')
 RE_LSQ = re.compile(
@@ -148,6 +152,11 @@ class Progress:
 
 TPC_SAMPLE_TICKS = 20000
 
+# Most of the off-period ticks that may sit mid-cycle. Measured over seven
+# traces: a correct period puts every straggler one tick past an edge and
+# reads 0, while a period sampled at twice the truth reads 35 to 77 percent.
+TPC_STRAGGLER_MAX = 0.05
+
 
 def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
     # Mode, not minimum. Gaps between adjacent distinct ticks are whole
@@ -190,6 +199,25 @@ def detect_tpc_streaming(path, progress=None, sample=TPC_SAMPLE_TICKS):
                 best_count, best_delta = c, d
         if best_delta > 0:
             tpc = best_delta
+    # A stall-dominated prefix makes the commonest gap a whole multiple of
+    # the period, which would divide every cycle number by that factor. The
+    # ticks that fall between period edges are what give it away.
+    if tpc is not None and len(ticks) > 8:
+        stragglers = [x % tpc for x in ticks if x % tpc]
+        margin = max(1, tpc // 10)
+        far = [o for o in stragglers if margin <= o <= tpc - margin]
+        if stragglers and len(far) / len(stragglers) > TPC_STRAGGLER_MAX:
+            true_period = min(far)
+            factor = tpc // true_period if true_period else 0
+            sys.exit(
+                f"Ticks-per-cycle detection is not trustworthy on {path}: the "
+                f"commonest gap between adjacent ticks is {tpc:,}, but "
+                f"{len(far):,} of {len(stragglers):,} ticks that miss that "
+                f"period land mid-cycle rather than beside an edge, the "
+                f"closest at {true_period:,}. That is a period of "
+                f"{true_period:,} sampled during a stall-heavy stretch. Every "
+                f"cycle number depends on this, so the run stops rather than "
+                f"dividing them all by {factor}. Pass --tpc to override.")
     if tpc is None:
         sys.exit(
             f"Could not derive ticks-per-cycle from {path}: found "
@@ -218,6 +246,8 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
     """Infer MinorCPU forward delays from the minimum observed stage gap.
     Falls back to gem5 default 1 when fewer than 4 valid samples.
 
+    Returns three (value, measured) pairs, in f1->f2, f2->dec, dec->ex order.
+
     Minimum, not mode, and deliberately. A forward delay is fixed and stalls
     only ever lengthen the observed gap, so the noise is one-sided and the
     floor of the distribution is the parameter. The mode measures how stalled
@@ -239,12 +269,13 @@ def infer_forward_delays(execute_map, fetch1_map, fetch2_map, decode_map, issue_
             d_dectr.append(tr - dc)
 
     def pick(deltas, fallback):
-        # A zero forward delay is legal in gem5 but excluded here, so a
-        # config using one is reported as the fallback 1 rather than 0.
+        # Returns (value, measured). Stages are reconstructed from these,
+        # so a fallback becomes the timeline and 1 measured is
+        # indistinguishable from 1 defaulted. A legal zero reports as 1.
         valid = [d for d in deltas if 1 <= d <= 16]
         if len(valid) < 4:
-            return fallback
-        return min(valid)
+            return fallback, False
+        return min(valid), True
 
     return pick(d_f1f2, 1), pick(d_f2dec, 1), pick(d_dectr, 1)
 
@@ -266,6 +297,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     # recvRetry seen, next Issued fetch request is the retry
     retry_pending = [False]
     fetch1_vaddr = {}   # lineSeq -> vaddr base
+    fetch1_paddr = {}   # lineSeq -> paddr base, the cache's own key
     fetch2_map = {}     # fetchSeq -> cycle of "decoder inst"
     decode_map = {}     # fetchSeq -> cycle of "Passing on inst"
     # fetchSeq -> {cycle, lineSeq, pc, instr, fu, flags, src, dest,
@@ -281,8 +313,28 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     discard_map = {}
     lsq_events = {}     # fetchSeq -> {pushCycle, issueCycle, completeCycle, isStore}
     storebuf_events = {}  # fetchSeq -> {pushCycle, deleteCycle}
+    # A missing --debug-flags entry is the commonest way to get a wrong
+    # answer here, because an empty set answers every membership test False.
+    # Keyed on the module prefix, since events also depend on the program.
+    seen_families = set()
+    # Drained as families appear, so a complete trace soon pays one test
+    # against an empty set per line rather than six substring scans.
+    wanted_families = {
+        'l1icaches': 'l1icaches:',
+        'l1dcaches': 'l1dcaches:',
+        'lsq': 'lsq:',
+        'storeBuffer': 'storeBuffer:',
+        'ras': 'ras:',
+        'execute_minorinst': 'MinorInst:',
+    }
+    missing_families = dict(wanted_families)
     ic_miss_cycles = set()
     ic_hit_cycles = set()
+    # (cycle, paddr) -> was a miss. Two fetches on one cycle are told apart
+    # by address, which a cycle alone cannot do.
+    ic_miss_by_addr = {}
+    # Records bound by cycle because no paddr was available for the line.
+    ic_bound_without_addr = [0]
     # Wrapping instructions whose lower-half line fetch was not found
     # within the 32-back search. Surfaced in metadata so the silent
     # drop is visible.
@@ -312,6 +364,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     observed_line_size = [None]   # boxed so inner assignment is visible
     branch_pred_info = {}
 
+    # True for any trace with issue activity, so it is nearer "not empty"
+    # than a capability probe despite the name. Used below.
     has_minor_execute = [False]
 
     line_no = 0
@@ -327,6 +381,11 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         tm = RE_TICK.match(l)
         if not tm:
             continue
+        if missing_families:
+            for _fam, _prefix in list(missing_families.items()):
+                if _prefix in l:
+                    seen_families.add(_fam)
+                    del missing_families[_fam]
         cycle = round_half_up(int(tm.group(1)) / tpc)
 
         # A collision line names no instruction, so the id comes from the
@@ -362,6 +421,8 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                 fetch1_map[line_seq] = cycle
             if line_seq not in fetch1_vaddr:
                 fetch1_vaddr[line_seq] = int(m.group(3), 16)
+            if m.group(4) and line_seq not in fetch1_paddr:
+                fetch1_paddr[line_seq] = int(m.group(4), 16)
             if observed_line_size[0] is None:
                 observed_line_size[0] = int(m.group(2))
             continue
@@ -394,12 +455,15 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
 
         m = RE_ICACHE.search(l)
         if m:
-            if m.group(1) == 'miss':
+            addr = int(m.group(1), 16)
+            if m.group(2) == 'miss':
                 ic_miss_cycles.add(cycle)
-                ic_miss_log.append([cycle, False])   # [cycle, coalesced]
+                ic_miss_by_addr.setdefault((cycle, addr), True)
+                ic_miss_log.append([cycle, False, addr])
             else:
                 ic_hit_cycles.add(cycle)
-                ic_hit_log.append(cycle)
+                ic_miss_by_addr.setdefault((cycle, addr), False)
+                ic_hit_log.append([cycle, addr])
             continue
 
         if RE_ICCOALESCE.search(l):
@@ -664,8 +728,13 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         print("[build] assembling instruction records…", file=sys.stderr)
 
     # ---- Forward-delay inference -------------------------------------------
-    pipe_f1f2, pipe_f2dec, pipe_dec_ex = infer_forward_delays(
-        execute_map, fetch1_map, fetch2_map, decode_map, issue_first)
+    (pipe_f1f2, m_f1f2), (pipe_f2dec, m_f2dec), (pipe_dec_ex, m_dec_ex) = (
+        infer_forward_delays(
+            execute_map, fetch1_map, fetch2_map, decode_map, issue_first))
+    # Which of the three were measured rather than defaulted to 1. Carried to
+    # metadata, because a stage reconstructed from a defaulted delay is a
+    # guess wearing a cycle number.
+    pipe_measured = {'f1_f2': m_f1f2, 'f2_dec': m_f2dec, 'dec_ex': m_dec_ex}
 
     # ---- Commit lookup tables ----------------------------------------------
     # gem5 splits a RISC-V atomic into a load and a store committing on
@@ -699,6 +768,27 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     pc_ptr = {}
 
     line_size = observed_line_size[0]
+
+    # Was the I-cache line family present at all? Distinguishes a measured
+    # "no miss" from an unobserved one on every icMiss field below.
+    ic_observed = 'l1icaches' in seen_families
+
+    def bind_ic_miss(line_seq, req_cycle):
+        """Was this line's fetch a miss? None when nothing was observed.
+
+        Keyed on the line's physical address as well as its cycle, so two
+        fetches sharing a cycle cannot take each other's verdict."""
+        if not ic_observed or req_cycle is None:
+            return None
+        paddr = fetch1_paddr.get(line_seq)
+        if paddr is not None:
+            verdict = ic_miss_by_addr.get((req_cycle, paddr))
+            if verdict is not None:
+                return verdict
+        # No address to match on, so the cycle is all there is. Counted
+        # because it is the only path where a collision could mislead.
+        ic_bound_without_addr[0] += 1
+        return req_cycle in ic_miss_cycles
 
     records = []
     for seq in sorted(execute_map.keys()):
@@ -803,13 +893,13 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                             wraps_line = True
                             f1reqA = prev_req
                             f1respA = prev_resp
-                            icMissA = prev_req in ic_miss_cycles
+                            icMissA = bind_ic_miss(wrap_prev_line_seq,
+                                                   prev_req)
                             icRetryA = wrap_prev_line_seq in fetch1_retried
                             f1holdA = fetch1_held.get(wrap_prev_line_seq)
                             f1reqB = curr_req
                             f1respB = curr_resp
-                            icMissB = (
-                                curr_req in ic_miss_cycles) if curr_req is not None else None
+                            icMissB = bind_ic_miss(ex['lineSeq'], curr_req)
                             icRetryB = ex['lineSeq'] in fetch1_retried
                             f1holdB = fetch1_held.get(ex['lineSeq'])
 
@@ -817,11 +907,13 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         f1_hold = fetch1_held.get(ex['lineSeq'])
         # fetchReqCyc / icMiss (aggregate, with wrap override)
         fetch_req_cyc = fetch1_req.get(ex['lineSeq'])
-        ic_miss = (
-            fetch_req_cyc in ic_miss_cycles) if fetch_req_cyc is not None else None
+        # None rather than False when the l1icaches family is absent: an
+        # empty set answers every membership test with False, which reads as
+        # a measured "no miss" instead of "not observed".
+        ic_miss = bind_ic_miss(ex['lineSeq'], fetch_req_cyc)
         if wraps_line:
             fetch_req_cyc = f1reqA
-            if icMissA or icMissB:
+            if ic_observed and (icMissA or icMissB):
                 ic_miss = True
             f1_hold = f1holdA
         if f1_hold is not None and (fetch_req_cyc is None
@@ -953,12 +1045,15 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             # value on the record was estimated. Named for what they hold:
             # the old _real_* read as booleans and a genuine cycle 0 would
             # have tested false.
+            '_f1ObservedCycle': f1c,
             '_f2ObservedCycle': f2real,
             '_decObservedCycle': dec_real,
             '_retObservedCycle': ret_cyc,
         })
 
-    # ---- MinorExecute-only mnemonic enrichment -----------------------------
+    # ---- Mnemonic enrichment from the commit log ---------------------------
+    # The guard is true on any trace that issued anything, so this runs
+    # almost always. The key is in the emitted metadata, hence the name.
     if has_minor_execute[0] and records:
         enrich_by_pc = {}
         for cm in commit_list:
@@ -984,8 +1079,19 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
     # ic_miss_log entries are [cycle, coalesced], appended at the two sites
     # above. The D-cache log next to it uses named dicts, so read the indices
     # carefully: e[1] is coalesced, and a coalesced miss did not open an MSHR.
-    ic_access_cycles = sorted(ic_hit_log + [e[0] for e in ic_miss_log])
-    ic_miss_arr = sorted(cyc for cyc, coalesced in ic_miss_log if not coalesced)
+    ic_access_pairs = sorted(ic_hit_log + [[e[0], e[2]] for e in ic_miss_log])
+    ic_access_cycles = [c for c, _a in ic_access_pairs]
+    ic_access_addrs = [a for _c, a in ic_access_pairs]
+    ic_miss_pairs = sorted([c, a] for c, coalesced, a in ic_miss_log
+                           if not coalesced)
+    ic_miss_arr = [c for c, _a in ic_miss_pairs]
+    ic_miss_addrs = [a for _c, a in ic_miss_pairs]
+    # The remainder of the misses. Kept apart because miss_cycles above is
+    # tied to overallMshrMisses, and a coalesced miss opened no MSHR.
+    ic_coal_pairs = sorted([c, a] for c, coalesced, a in ic_miss_log
+                           if coalesced)
+    ic_coal_cycles = [c for c, _a in ic_coal_pairs]
+    ic_coal_addrs = [a for _c, a in ic_coal_pairs]
 
     # Counted from the access log, since per-instruction attribution misses
     # store writebacks that retire after commit. Cycles carry multiplicity, a
@@ -1005,10 +1111,50 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
         c for c, evs in dcache_by_cycle.items()
         for e in evs if e['miss'] and not e['coalesced'] and e['isWrite'])
 
+    # Travels in the JSON because a stderr warning is unrecoverable once a
+    # long run has finished. --strict fails on a non-empty list.
+    degraded = []
+
+    def _degrade(cond, key, detail):
+        if not cond:
+            degraded.append({'mechanism': key, 'effect': detail})
+
+    _degrade('execute_minorinst' in seen_families, 'execute_minorinst',
+             'no MinorInst lines, so no instruction carries a mnemonic, a '
+             'PC or a functional unit')
+    _degrade('l1icaches' in seen_families, 'icache',
+             'icMiss, icMissA and icMissB are null and ic_events is empty: '
+             'no I-cache miss can be told from a hit')
+    _degrade('l1dcaches' in seen_families, 'dcache',
+             'dcMiss is null and dc_events is empty')
+    # A program with no loads or stores emits no lsq or storeBuffer lines
+    # however the flags were set, so absence is only evidence of a missing
+    # flag when there was memory work to report.
+    did_memory = any(r.get('fu') in ('MemRead', 'MemWrite') for r in records)
+    _degrade('lsq' in seen_families or not did_memory, 'lsq',
+             'memPush, memIssue, memComplete and isStore are null on every '
+             'memory instruction')
+    _degrade('storeBuffer' in seen_families or not did_memory, 'storebuffer',
+             'the store-buffer push and delete cycles are absent')
+    _degrade('ras' in seen_families, 'ras',
+             'the RAS push, pop and drop markers are absent')
+    # Body-level checks. The ones above ask what the trace contained. These
+    # ask whether what it contained is usable, which a family census cannot
+    # answer. A truncated trace has every family and no committed record.
+    _degrade(bool(records), 'no_records',
+             'zero instructions were recovered, so the trace is empty of '
+             'anything to draw')
+    _degrade(any(not r['flushed'] and r['cm'] is not None for r in records),
+             'no_commits',
+             'no instruction committed, which a complete run of any program '
+             'cannot produce: the trace is most likely truncated')
+
     return {
         'metadata': {
             'tool': 'minorflow_tracer',
-            # Schema 4, five changes.
+            # 6: I-cache event addresses, coalesced-miss arrays, line_paddr,
+            # ic_bound_without_addr. 5: _f1ObservedCycle,
+            # pipe_delays_measured, seen_line_families, degraded. 4:
             # flushCycle holds the discard cycle, the old value moved to
             # branchResolveCycle. clock_period_ps became clock_period_ticks
             # plus tick_unit. dcMissIsStore is gone: it never looked at
@@ -1016,7 +1162,7 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             # rather than absent. _real_f2/_real_dec/_real_ret became
             # _f2ObservedCycle/_decObservedCycle/_retObservedCycle.
             # `estimated` is any estimated stage rather than all three.
-            'schema_version': 4,
+            'schema_version': 6,
             # Ticks, not picoseconds. gem5's default tick rate makes them
             # numerically equal and no conversion is ever applied, so the
             # unit is named separately rather than baked into the key.
@@ -1025,11 +1171,20 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
             'clock_period_ticks': tpc,
             'tick_unit': '1ps',
             'pipe_delays': {'f1_f2': pipe_f1f2, 'f2_dec': pipe_f2dec, 'dec_ex': pipe_dec_ex},
+            # True where the delay above was measured from at least four
+            # observed stage gaps, False where it is the gem5 default of 1.
+            'pipe_delays_measured': pipe_measured,
             'n_instructions': len(records),
             'has_minor_execute': has_minor_execute[0],
             'observed_line_size': line_size,
             'unattributed_collisions': collision_unresolved[0],
             'wrap_partner_not_found': wrap_partner_not_found[0],
+            # Non-zero means some icMiss was decided by cycle alone, where a
+            # second fetch on that cycle could have supplied the verdict.
+            'ic_bound_without_addr': ic_bound_without_addr[0],
+            # Tells an absent mechanism from a measured zero.
+            'seen_line_families': sorted(seen_families),
+            'degraded': degraded,
         },
         'config_params': branch_pred_info,
         # Sorted base/name pairs, so the viewer can resolve a branch target to
@@ -1038,7 +1193,18 @@ def parse(line_source, tpc, progress=None, total_bytes=0):
                           key=lambda e: e[0]),
         'ic_events': {
             'access_cycles': ic_access_cycles,
+            # Parallel to the cycle arrays. Ships the key the binding used, so
+            # an icMiss can be checked against the event that produced it.
+            'access_addrs': ic_access_addrs,
             'miss_cycles': ic_miss_arr,
+            'miss_addrs': ic_miss_addrs,
+            # icMiss is true for a coalesced miss too, so both sets are
+            # needed to re-derive a record's verdict from this file.
+            'coalesced_miss_cycles': ic_coal_cycles,
+            'coalesced_miss_addrs': ic_coal_addrs,
+            # [lineSeq, paddr] pairs. Without it a reader cannot tell which
+            # of several accesses on a cycle belongs to a given record.
+            'line_paddr': sorted([ls, pa] for ls, pa in fetch1_paddr.items()),
             'blocked_spans': blocked_spans.get('l1icaches', {}),
             'charge_spans': charge_spans.get('l1icaches', {}),
         },
@@ -1122,6 +1288,11 @@ def main():
                     help='Ticks per CPU cycle, skipping the detection pass. '
                          '20000 for a 50 MHz core at the gem5 default tick '
                          'rate. Only worth giving on a very large trace')
+    ap.add_argument('--strict', action='store_true',
+                    help='Exit non-zero if any mechanism failed to resolve. '
+                         'The JSON is still written. Use this in batch runs '
+                         'so a degraded trace is not mistaken for a complete '
+                         'one.')
     args = ap.parse_args()
 
     if not os.path.isfile(args.trace):
@@ -1145,6 +1316,23 @@ def main():
         print(f"[WARN] {md['unattributed_collisions']} store collision(s) "
               f"could not be tied to an instruction, so their strips are "
               f"missing from the timeline.", file=sys.stderr)
+    if md.get('ic_bound_without_addr'):
+        print(f"[WARN] {md['ic_bound_without_addr']} I-cache verdict(s) were "
+              f"bound by cycle alone, with no paddr for the line. A second "
+              f"fetch on the same cycle could have supplied the verdict.",
+              file=sys.stderr)
+    if md.get('wrap_partner_not_found'):
+        print(f"[WARN] {md['wrap_partner_not_found']} wrapping instruction(s) "
+              f"had no lower-half line fetch within the 32-back search, so "
+              f"their f1reqA/f1respA and the hi-half icMiss are absent. The "
+              f"count is in metadata.wrap_partner_not_found.", file=sys.stderr)
+    measured = md.get('pipe_delays_measured') or {}
+    defaulted = sorted(k for k, v in measured.items() if not v)
+    if defaulted:
+        print(f"[WARN] forward delay(s) {', '.join(defaulted)} had fewer than "
+              f"four observed stage gaps, so they default to 1 rather than "
+              f"being measured. Any stage reconstructed from them is an "
+              f"estimate.", file=sys.stderr)
     if md['n_instructions'] and not data.get('ras_events', {}).get('depth'):
         print("[INFO] No 'ras:' lines in this trace, so the RAS push, pop and "
               "drop markers will be absent. Add RAS to --debug-flags when "
@@ -1189,6 +1377,29 @@ def main():
               f"ic_access={len(data['ic_events']['access_cycles'])} "
               f"ic_miss={len(data['ic_events']['miss_cycles'])}")
 
+    # Degradation report, printed last so it is the final thing on screen
+    # after a long run, and mirrored into metadata.degraded so a JSON can be
+    # audited long after the stderr has gone.
+    degraded = md.get('degraded', [])
+    if degraded:
+        print(f"[DEGRADED] {len(degraded)} mechanism(s) did not resolve. The "
+              f"affected fields are null or empty, not measured.",
+              file=sys.stderr)
+        for d in degraded:
+            print(f"           {d['mechanism']:<20} {d['effect']}",
+                  file=sys.stderr)
+        print("           This is recorded in metadata.degraded in the "
+              "output JSON.", file=sys.stderr)
+    else:
+        print("[INFO] All mechanisms resolved. metadata.degraded is empty.",
+              file=sys.stderr)
+
+    if degraded and args.strict:
+        print("Exiting non-zero: --strict was given and the trace is "
+              "degraded.", file=sys.stderr)
+        return 3
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

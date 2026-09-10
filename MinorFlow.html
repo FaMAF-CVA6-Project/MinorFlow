@@ -542,6 +542,7 @@
       pointer-events: auto;
       border-color: #d8a03a;
     }
+
     #tt.pinned::after {
       content: 'pinned \00b7 Esc or P to release';
       display: block;
@@ -550,10 +551,12 @@
       font-size: 10px;
       font-family: var(--font-mono);
     }
+
     #tt .maxref {
       color: #6f7f9a;
       cursor: pointer;
     }
+
     #tt .maxref:hover {
       color: #9fb4d4;
       text-decoration: underline;
@@ -562,13 +565,16 @@
     #tt .gotoref {
       color: #7fb8e8;
     }
+
     #tt.pinned .gotoref {
       cursor: pointer;
       text-decoration: underline;
     }
+
     #tt.pinned .gotoref:hover {
       color: #b8d8f5;
     }
+
     /* Stall composition strip. Segments are a share of the sum of the four
      * categories, not of the Stall total, because a cycle stalled for more
      * than one reason is counted in each category it belongs to. */
@@ -577,11 +583,13 @@
     #stalldiag-wrap {
       margin: 2px 0 14px;
     }
+
     #stalldiag {
       display: block;
       width: 100%;
       height: 96px;
     }
+
     #stalldiag-key {
       display: flex;
       flex-wrap: wrap;
@@ -591,6 +599,7 @@
       font-size: 10px;
       color: var(--text3);
     }
+
     #stalldiag-key i {
       display: inline-block;
       width: 9px;
@@ -599,6 +608,7 @@
       margin-right: 5px;
       vertical-align: -1px;
     }
+
     #stalldiag-read {
       margin-top: 5px;
       font-family: var(--font-mono);
@@ -606,6 +616,7 @@
       color: var(--text2);
       min-height: 13px;
     }
+
     /* Pin dock. Pinned tooltips leave the timeline and stack side by side at
        a fixed width, so equivalent rows line up across cards and comparing
        two instructions is reading across rather than arranging windows. */
@@ -617,15 +628,18 @@
       background: var(--bg2);
       border-top: 0.5px solid var(--border2);
     }
+
     #pindock.on {
       display: block;
     }
+
     #pinrow {
       display: flex;
       align-items: flex-start;
       gap: 8px;
       padding: 8px;
     }
+
     .pincard {
       flex: 0 0 236px;
       background: var(--bg);
@@ -633,6 +647,7 @@
       border-radius: 5px;
       overflow: hidden;
     }
+
     .pinhead {
       display: flex;
       align-items: center;
@@ -643,6 +658,7 @@
       font-family: var(--font-mono);
       font-size: 10px;
     }
+
     .pinhead .go {
       flex: 1;
       color: #7fb8e8;
@@ -651,29 +667,35 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
     .pinhead .go:hover {
       color: #b8d8f5;
       text-decoration: underline;
     }
+
     .pinhead .x {
       color: var(--text3);
       cursor: pointer;
       padding: 0 2px;
     }
+
     .pinhead .x:hover {
       color: var(--bad);
     }
+
     .pinbody {
       padding: 7px 9px;
       font-family: var(--font-mono);
       font-size: 11px;
       line-height: 1.5;
     }
+
     .pinbody table {
       border-collapse: collapse;
       font-size: 11px;
       width: 100%;
     }
+
     #tt {
       position: fixed;
       z-index: 200;
@@ -1139,7 +1161,9 @@
   </div>
 
   <!-- ═══════════════════════════════ STATUS BAR ═════════════════════════════ -->
-  <div id="pindock"><div id="pinrow"></div></div>
+  <div id="pindock">
+    <div id="pinrow"></div>
+  </div>
   <div id="status">
     <span title="Cycle the mouse cursor is over.">Cycle: <span class="hi" id="s-c">-</span></span>
     <span title="Instruction at the row under the cursor.">Instr: <span class="hi" id="s-i">-</span></span>
@@ -1493,7 +1517,7 @@
      * for traces parsed before dc_events. */
     let dcAccessCycles = [], dcMissCyclesArr = [], dcStoreAccessCyclesArr = [], dcStoreMissCyclesArr = [];
     /* {cause name: [[startCycle, endCycle], ...]} from the cache's blocking
-     * causes. no_mshrs is stock; the rest arrive only from a patched build. */
+     * causes. no_mshrs is stock, the rest arrive only from a patched build. */
     let dcBlockedSpans = {}, icBlockedSpans = {};
     /* The accept-and-charge form of the readout and refill windows. It replaces
      * causes 3 and 5 only, so a run carries both kinds of span: the I-side
@@ -2379,6 +2403,23 @@
     }
 
     /* Shape check for the parser output. Returns an error string, or null if OK. */
+    /* Without this check a mismatched JSON renders as silent nulls rather
+     * than failing to load. The tracer emits the same number. */
+    const MINORFLOW_SCHEMA_VERSION = 6;
+    function schemaComplaint(d) {
+      const v = d && d.metadata && d.metadata.schema_version;
+      if (v == null) {
+        return 'This JSON carries no <code>schema_version</code>, so it was '
+          + 'written by a tracer older than this viewer. Regenerate it with '
+          + 'the current MinorFlow_tracer.py.';
+      }
+      if (v !== MINORFLOW_SCHEMA_VERSION) {
+        return `This JSON is schema ${v} and this viewer reads schema `
+          + `${MINORFLOW_SCHEMA_VERSION}. Regenerate it with the matching `
+          + 'MinorFlow_tracer.py.';
+      }
+      return null;
+    }
     function validateMinorflowJson(d) {
       if (typeof d !== 'object' || d === null) return 'Top level is not a JSON object.';
       if (!Array.isArray(d.instructions)) return 'Missing the <code>instructions</code> array.';
@@ -2395,6 +2436,8 @@
       for (const k of need) {
         if (!(k in r)) return `Instruction records are missing the <code>${k}</code> field that the MinorFlow tracer always emits.`;
       }
+      const sv = schemaComplaint(d);
+      if (sv) return sv;
       return null;
     }
 
@@ -3575,7 +3618,7 @@
       const dz = document.getElementById('dropzone');
       if (dz) dz.classList.remove('ov');
       /* A dropped file left no handle behind, so the next picker had no
-       * directory to start in. Chromium exposes one on the drop item; other
+       * directory to start in. Chromium exposes one on the drop item, other
        * browsers return nothing and the picker falls back as before. */
       const it = e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items[0];
       if (it && typeof it.getAsFileSystemHandle === 'function') {
@@ -4221,7 +4264,7 @@
           : (r >= 100 ? (Math.floor(p * 100) / 100).toFixed(2) : String(r));
       }
 
-      /* Wall-clock time = span / frequency, where frequency = 1 / (TPC × tick
+      /* Wall-clock time = span / frequency, where frequency = 1 / (TPC * tick
        * resolution). Tick unit is assumed to be picoseconds, gem5's default. */
       const freqHz = TPC > 0 ? (1e12 / TPC) : 0;
       const totalNs = (freqHz > 0) ? (span / freqHz) * 1e9 : 0;
@@ -4999,7 +5042,7 @@
 
       /* Pipeline bars, drawn back-to-front (commit-side stages first, fetch last)
        * so later stages are never painted over by earlier ones. Bar-height rule:
-       * fetch1 0.55 ≤ fetch2 0.60 ≤ decode 0.65 < exec = exec-buf = wb 0.85 < commit 1.0. */
+       * fetch1 0.55 <= fetch2 0.60 <= decode 0.65 < exec = exec-buf = wb 0.85 < commit 1.0. */
       const H_EXEC = 0.85;
 
       if (ins.cm !== null && ins.fuDone !== null && ins.cm > ins.fuDone)
@@ -5907,7 +5950,7 @@
         + `<span class="go" data-pin-go="${i}" title="Go to this instruction">${escapeHtml(p.title)}</span>`
         + `<span class="x" data-pin-x="${i}" title="Unpin">\u00d7</span></div>`
         + `<div class="pinbody">${p.html}</div></div>`).join('');
-      
+
     }
 
     function addPin() {
