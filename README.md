@@ -55,14 +55,14 @@ python3 scripts/make_MinorFlow_sample.py daxpy.json --from 4000     # start past
 python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet] [--tpc TICKS]
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `trace` | Path to the gem5 MinorCPU debug trace (`.txt`, `.log`) |
-| `-o`, `--out` | Output JSON path. Defaults to `<trace>.json` |
-| `--stats` | Print a summary of committed and flushed instructions plus instruction-cache activity |
-| `--quiet` | Suppress the progress output |
-| `--tpc` | Ticks per CPU cycle, skipping the detection pass. 20000 at 50 MHz on gem5's default tick rate |
-| `--strict` | Exit non-zero (3) if any mechanism failed to resolve, which is what a trace captured without one of the debug-flag line families looks like. The JSON is still written, and `metadata.degraded` names what is missing. Use it in batch runs so a degraded trace is not mistaken for a complete one |
+| Option        | Meaning                                                                                                                                                                                                                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trace`       | Path to the gem5 MinorCPU debug trace (`.txt`, `.log`)                                                                                                                                                                                                                                             |
+| `-o`, `--out` | Output JSON path. Defaults to `<trace>.json`                                                                                                                                                                                                                                                       |
+| `--stats`     | Print a summary of committed and flushed instructions plus instruction-cache activity                                                                                                                                                                                                              |
+| `--quiet`     | Suppress the progress output                                                                                                                                                                                                                                                                       |
+| `--tpc`       | Ticks per CPU cycle, skipping the detection pass. 20000 at 50 MHz on gem5's default tick rate                                                                                                                                                                                                      |
+| `--strict`    | Exit non-zero (3) if any mechanism failed to resolve, which is what a trace captured without one of the debug-flag line families looks like. The JSON is still written, and `metadata.degraded` names what is missing. Use it in batch runs so a degraded trace is not mistaken for a complete one |
 
 The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds the records. Pass 1 stops once it has seen enough distinct ticks to settle the answer, so it costs a fraction of the file rather than all of it, and `--tpc` skips it entirely when the clock is already known.
 
@@ -78,15 +78,15 @@ Run it **from the gem5 root**: the script takes the current directory as the gem
 python3 /path/to/MinorFlow/scripts/run_gem5.py <config>.py <test> [--build NAME] [--lang c|asm] [--no-trace]
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `<config>.py` | The gem5 MinorCPU configuration script, for example [configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py) |
-| `<test>` | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension |
-| `--lang` | Force the type instead of detecting it |
-| `--build` | Which build to run: a directory name under `build/`, a path to one, or a path to the binary. Defaults to `RISCV` |
-| | A patched CVA6 build is flagged with a warning, since the overhead profile here was measured on a stock one |
-| `--no-trace` | Skip the debug flags and report metrics only. Use it when you only want the numbers, since the trace is the expensive part |
-| anything else | Passed on to the configuration script. A configuration that defines its own options gets them this way |
+| Argument      | Meaning                                                                                                                    |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `<config>.py` | The gem5 MinorCPU configuration script, for example [configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py)   |
+| `<test>`      | The program to run: C (`.c`) or assembly (`.S`, `.s`, `.asm`). The type is detected from the extension                     |
+| `--lang`      | Force the type instead of detecting it                                                                                     |
+| `--build`     | Which build to run: a directory name under `build/`, a path to one, or a path to the binary. Defaults to `RISCV`           |
+|               | A patched CVA6 build is flagged with a warning, since the overhead profile here was measured on a stock one                |
+| `--no-trace`  | Skip the debug flags and report metrics only. Use it when you only want the numbers, since the trace is the expensive part |
+| anything else | Passed on to the configuration script. A configuration that defines its own options gets them this way                     |
 
 What it does, in order:
 
@@ -118,7 +118,7 @@ There are two forms, and accept-and-charge replaces blocking for **two causes on
 
 **Return address stack.** `scripts/run_gem5.py` enables gem5's `RAS` debug flag, which is stock but off by default. Every call that pushes and every return that pops is marked on its Fetch2 cell as `ras+` and `ras-`, one strip row below the branch outcome so a return that both pops and mispredicts shows each of them. A squash that leaves a speculative push or pop standing, which is what `rasNoRecovery` transcribes, is marked `ras!`.
 
-The **Extra Info** panel adds a *Return address stack* section with the whole-trace picture the per-instruction markers cannot give: pushes and pops, the deepest the stack reached against its capacity, the depth left at the end, and how many operations squashes left unrepaired. A depth well above zero at the end on a balanced program is the signature of that last figure.
+The **Extra Info** panel adds a _Return address stack_ section with the whole-trace picture the per-instruction markers cannot give: pushes and pops, the deepest the stack reached against its capacity, the depth left at the end, and how many operations squashes left unrepaired. A depth well above zero at the end on a balanced program is the signature of that last figure.
 
 A configuration script may define options of its own. Any flag `scripts/run_gem5.py` does not recognise is handed to it, since gem5 passes everything after the script's path to the script:
 
@@ -129,6 +129,14 @@ python3 scripts/run_gem5.py my_config.py daxpy.S -- --some-config-flag   # when 
 
 The `--` form is the unambiguous one: use it for a flag that takes a value, or one whose name collides with `--lang` or `--no-trace`. Forwarded flags are echoed before the run, and if the configuration rejects them its own error comes back through.
 
+### A whole folder at once
+
+`scripts/run_all_gem5_benchmarks.py` runs every benchmark in a folder through `run_gem5.py`, skips the templates, and prints a pass and fail summary. Run it from the gem5 root, which is where `run_gem5.py` looks for the build. A failed run is kept rather than cleaned, so its output is still there at the end.
+
+```bash
+python3 /path/to/MinorFlow/scripts/run_all_gem5_benchmarks.py configs/gem5_config_MinorFlow.py benchmarks/
+```
+
 ### Writing a test
 
 [benchmarks/](benchmarks/) holds the tests used to develop MinorFlow, and `test_template.c` and `test_template.S` are the starting points. The template sets up `gp`, calls `m5_reset_stats`, leaves a `MAIN PROGRAM` / `END OF MAIN PROGRAM` region for your code, and then calls `m5_dump_stats` and `m5_exit`. Write inside the markers and the driver measures and disassembles exactly that region.
@@ -137,25 +145,25 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 
 [configs/gem5_config_MinorFlow.py](configs/gem5_config_MinorFlow.py) is not one machine but seventeen. Set `TEST` to the one you want. `TEST 1` is the Reference Core, and every other entry perturbs one part of the pipeline so its effect is visible in the viewer, against the workload that shows it:
 
-| # | What it changes | Workload |
-| --- | --- | --- |
-| 1 | baseline | all |
-| 2 | `fetch2ToDecodeForwardDelay` 1 to 2 | daxpy |
-| 3 | `decodeToExecuteForwardDelay` 1 to 2 | daxpy |
-| 4 | `fetch1LineWidth` and snap 4 to 16 | icache_hit_loop |
-| 5 | `fetch1FetchLimit` 1 to 4, L1I 16KiB to 2KiB | icache_hit_loop |
-| 6 | `fetch2InputBufferSize` 3 to 6 | int_loop |
-| 7 | `decodeInputBufferSize` 4 to 8 | int_loop |
-| 8 | `executeInputBufferSize` 8 to 3 | int_loop |
-| 9 | dual issue, 2-wide | matrix_mul |
-| 10 | `executeCommitLimit` 2 to 1 on the 2-wide pipe, so commit becomes the binding limit against 9 | matrix_mul |
-| 11 | `branchPred` LocalBP to TournamentBP | branch_stress |
-| 12 | L1D access latency 1 to 3 | dcache_hit_loop |
-| 13 | `executeLSQStoreBufferSize` 16 to 2 | stream_store |
-| 14 | baseline at 47 MHz, clock only | int_loop |
-| 15 | L1I access latency 1 to 3 | icache_hit_loop |
-| 16 | `executeBranchDelay` 1 to 10 | branch_stress |
-| 17 | combination: 2-wide, L1I and L1D latency 3, forward delays 2, branch delay 5, 60 MHz | daxpy |
+| #   | What it changes                                                                               | Workload        |
+| --- | --------------------------------------------------------------------------------------------- | --------------- |
+| 1   | baseline                                                                                      | all             |
+| 2   | `fetch2ToDecodeForwardDelay` 1 to 2                                                           | daxpy           |
+| 3   | `decodeToExecuteForwardDelay` 1 to 2                                                          | daxpy           |
+| 4   | `fetch1LineWidth` and snap 4 to 16                                                            | icache_hit_loop |
+| 5   | `fetch1FetchLimit` 1 to 4, L1I 16KiB to 2KiB                                                  | icache_hit_loop |
+| 6   | `fetch2InputBufferSize` 3 to 6                                                                | int_loop        |
+| 7   | `decodeInputBufferSize` 4 to 8                                                                | int_loop        |
+| 8   | `executeInputBufferSize` 8 to 3                                                               | int_loop        |
+| 9   | dual issue, 2-wide                                                                            | matrix_mul      |
+| 10  | `executeCommitLimit` 2 to 1 on the 2-wide pipe, so commit becomes the binding limit against 9 | matrix_mul      |
+| 11  | `branchPred` LocalBP to TournamentBP                                                          | branch_stress   |
+| 12  | L1D access latency 1 to 3                                                                     | dcache_hit_loop |
+| 13  | `executeLSQStoreBufferSize` 16 to 2                                                           | stream_store    |
+| 14  | baseline at 47 MHz, clock only                                                                | int_loop        |
+| 15  | L1I access latency 1 to 3                                                                     | icache_hit_loop |
+| 16  | `executeBranchDelay` 1 to 10                                                                  | branch_stress   |
+| 17  | combination: 2-wide, L1I and L1D latency 3, forward delays 2, branch delay 5, 60 MHz          | daxpy           |
 
 `scripts/run_MinorFlow_sweep.py` replays all of it, which is how the traces in [tests/](tests/) were produced. It always sweeps `configs/gem5_config_MinorFlow.py`, the config it is written for, so it takes no config argument. Run it from the gem5 root, like `scripts/run_gem5.py`:
 
@@ -163,16 +171,16 @@ The `--` form is the unambiguous one: use it for a flag that takes a value, or o
 python3 scripts/run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `--configs` | Which configurations to run, for example `1,4-6`. Defaults to every one in the table |
-| `--tests-dir` | Where the workloads live. With no value, `MinorFlow_benchmarks/` then `benchmarks/` are looked for in the current directory and beside this repository, in that order |
-| `--tests` | Comma-separated workloads to run for every configuration, instead of the ones the table names |
-| `--out-dir` | Where results are collected. Defaults to `MinorFlow_sweep_results/` |
-| `--config` | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead |
-| `--no-trace` | Metrics only, no traces |
-| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds |
-| `--list` | Print the plan and exit, touching nothing |
+| Option         | Meaning                                                                                                                                                               |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--configs`    | Which configurations to run, for example `1,4-6`. Defaults to every one in the table                                                                                  |
+| `--tests-dir`  | Where the workloads live. With no value, `MinorFlow_benchmarks/` then `benchmarks/` are looked for in the current directory and beside this repository, in that order |
+| `--tests`      | Comma-separated workloads to run for every configuration, instead of the ones the table names                                                                         |
+| `--out-dir`    | Where results are collected. Defaults to `MinorFlow_sweep_results/`                                                                                                   |
+| `--config`     | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead                                                                                               |
+| `--no-trace`   | Metrics only, no traces                                                                                                                                               |
+| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds                               |
+| `--list`       | Print the plan and exit, touching nothing                                                                                                                             |
 
 For each configuration it sets `TEST` and runs that entry's workloads through [`scripts/run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
@@ -200,7 +208,7 @@ Bubbles, front-end stalls, serialisation delays and branch delays each get their
 
 Plus the usual quality-of-life: fit-to-viewport zoom, a hover panel with per-instruction detail, and a PC search box that matches anywhere in the address and steps through hits across the whole fetch window rather than only the rows on screen. Every control has an in-app tooltip, so they are not repeated here.
 
-Keys: `+` and `−` to zoom, arrows to navigate, `Home` and `End` to jump.
+Keys: `+` and `-` to zoom, arrows to navigate, `Home` and `End` to jump.
 
 ## Tested with
 
@@ -221,18 +229,18 @@ Image: https://hub.docker.com/repository/docker/manuel313/gem5_v25/general
 
 ## Paper
 
-MinorFlow is described in *MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture*, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, submitted to **CARLA 2026**, the Latin America High Performance Computing Conference. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
+MinorFlow is described in _MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture_, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, submitted to **CARLA 2026**, the Latin America High Performance Computing Conference. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
 
 Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in:
 
-| Path | Contents |
-| --- | --- |
-| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper |
-| `latex/` | LaTeX sources, bibliography and LNCS style files |
-| `images/` | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies |
-| `gem5_config_Reference_Core.py` | The gem5 configuration of the Reference Core the paper measures |
-| `daxpy_validation/` | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table |
-| `MinorFlow.html`, `MinorFlow_tracer.py` | The viewer and tracer as submitted |
+| Path                                                                           | Contents                                                                                 |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper                                                                      |
+| `latex/`                                                                       | LaTeX sources, bibliography and LNCS style files                                         |
+| `images/`                                                                      | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies    |
+| `gem5_config_Reference_Core.py`                                                | The gem5 configuration of the Reference Core the paper measures                          |
+| `daxpy_validation/`                                                            | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table |
+| `MinorFlow.html`, `MinorFlow_tracer.py`                                        | The viewer and tracer as submitted                                                       |
 
 The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 1 in the paper: 100 MHz, a 16 KiB 4-way L1I and a 32 KiB 8-way L1D at one-cycle hit, a 1024-entry local branch predictor with a 256-entry BTB and a 16-entry RAS. Run it the same way as any other config:
 
@@ -287,12 +295,22 @@ It repeats a real trace with every cycle field shifted forward rather than fabri
 
 ## Checking the repository: `scripts/check_MinorFlow_repo.py`
 
-Every script compiles and answers `--help`, the page's JavaScript parses, the cycle-field lists agree across the tracer's consumers, every relative link resolves, and nothing gained trailing whitespace or a missing final newline:
+Every script compiles and answers `--help`, the page's JavaScript parses, the cycle-field lists agree across the tracer's consumers, every relative link resolves, no comment picked up a semicolon or a non-ASCII character, and nothing gained trailing whitespace or a missing final newline:
 
 ```bash
 python3 scripts/check_MinorFlow_repo.py
 python3 scripts/check_MinorFlow_repo.py --list        # name the checks and stop
 python3 scripts/check_MinorFlow_repo.py -k formatting # just one
+```
+
+## Formatting: `scripts/format_MinorFlow_repo.py`
+
+autopep8 at 79 columns for the Python, Prettier for the Markdown, over this repository's own files only. The benchmarks get `.editorconfig`'s trailing whitespace and final newline, and the assembly gets its operands aligned two spaces past the file's longest mnemonic. No C style is imposed, because none is configured for this tree. `--check` reports without changing anything, and is what the `formatter` check above runs, so a formatted tree stays formatted.
+
+```bash
+python3 scripts/format_MinorFlow_repo.py           # format in place
+python3 scripts/format_MinorFlow_repo.py --check   # report, change nothing
+python3 scripts/format_MinorFlow_repo.py --python  # one language
 ```
 
 ## Licence
