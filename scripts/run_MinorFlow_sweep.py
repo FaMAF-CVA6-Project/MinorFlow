@@ -19,8 +19,8 @@ import time
 # CONFIGURATION
 # ==============================================================================
 DEFAULT_CONFIG = "gem5_config_MinorFlow.py"
-DEFAULT_TESTS_DIRS = ("MinorFlow_benchmarks", "benchmarks")
-DEFAULT_OUT_DIR = "MinorFlow_sweep_results"
+DEFAULT_TESTS_DIRS = ("benchmarks/viewer", "benchmarks/config")
+DEFAULT_OUT_DIR = os.path.join("results", "sweep_MinorFlow")
 
 RUNNER_NAME = "run_gem5.py"
 
@@ -29,7 +29,7 @@ RUNNER_NAME = "run_gem5.py"
 GEM5_BINARY_NAMES = ("gem5.opt", "gem5.fast", "gem5.debug")
 
 # Where run_gem5.py has gem5 write, cleared after each collected run.
-GEM5_OUT_DIR = "m5out"
+GEM5_OUT_DIR = os.path.join("results", "m5out")
 
 # Runs to keep in flight at once. Deliberately below the core count:
 # each holds a gem5 process and writes a trace, so memory and disk
@@ -295,9 +295,10 @@ def build_plan(table, config_ids, tests_dir, override_tests):
     return plan
 
 
-def driver_results_dir(runner):
-    """The run_results/ folder run_gem5.py copies its keepers into."""
-    return os.path.join(os.path.dirname(os.path.abspath(runner)), "run_results")
+def driver_results_dir():
+    """The results/run/ folder run_gem5.py copies its keepers into, under the
+    gem5 root, which is the directory the driver is run from."""
+    return os.path.join("results", "run")
 
 
 def job_dirs(runner, label):
@@ -305,7 +306,7 @@ def job_dirs(runner, label):
     concurrent runs cannot overwrite each other's stats.txt, trace or
     binary."""
     return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(runner), label))
+            os.path.join(driver_results_dir(), label))
 
 
 def write_config_copy(text, config_id, dest_dir, base_name):
@@ -567,9 +568,13 @@ def main():
     config_path = (os.path.abspath(args.config) if args.config
                    else find_beside_script(
                        DEFAULT_CONFIG, "Sweep config",
-                       extra=[os.path.join("..", "configs"),
-                              os.path.join("..", "..", "viewers",
-                                           "MinorFlow", "configs")]))
+                       extra=[
+                           # In this repository, beside the scripts/ folder.
+                           os.path.join("..", "configs"),
+                           # In the container, where every configuration is
+                           # under gem5_configs/ by origin.
+                           os.path.join("..", "gem5_configs", "viewer"),
+                           os.path.join("..", "gem5_configs", "config")]))
     if not os.path.isfile(config_path):
         print(f"[ERROR] The configuration file '{config_path}' does not exist")
         sys.exit(2)
@@ -768,7 +773,7 @@ def main():
               f"{os.path.abspath(GEM5_OUT_DIR)}")
     # Whatever the sweep emptied goes, anything a plain run_gem5.py run left
     # in there stays.
-    prune_empty(driver_results_dir(runner))
+    prune_empty(driver_results_dir())
     prune_empty(GEM5_OUT_DIR)
     return 1 if failed else 0
 
