@@ -19,7 +19,11 @@ import time
 # CONFIGURATION
 # ==============================================================================
 DEFAULT_CONFIG = "gem5_config_MinorFlow.py"
-DEFAULT_TESTS_DIRS = ("benchmarks/viewer", "benchmarks/config")
+# A container or gem5 root keeps both suites under benchmarks/, while this
+# repository keeps its own set flat in benchmarks/. That one is tried last,
+# so a root holding the suites never takes their parent instead.
+DEFAULT_TESTS_DIRS = ("benchmarks/viewer", "benchmarks/config",
+                      "benchmarks")
 DEFAULT_OUT_DIR = os.path.join("results", "sweep_MinorFlow")
 
 RUNNER_NAME = "run_gem5.py"
@@ -87,8 +91,12 @@ def find_beside_script(name, what, extra=()):
     for candidate in candidates:
         if os.path.isfile(candidate):
             return os.path.abspath(candidate)
-    print(f"[ERROR] {what} ({name}) not found next to this script or in the "
-          f"current directory.")
+    # Beside the script and the working directory are often one folder, so
+    # each place is named once.
+    places = dict.fromkeys(os.path.relpath(os.path.dirname(c))
+                           for c in candidates)
+    print(f"[ERROR] {what} ({name}) not found. Looked in: "
+          + ", ".join(places))
     sys.exit(2)
 
 
