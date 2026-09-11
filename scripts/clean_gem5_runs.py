@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Remove everything the gem5 run scripts generate: m5out/, batch_results/,
-the sweep result folders and each runner's run_results/. Only the fixed names
+"""Remove everything the gem5 run scripts generate, which is all of
+results/: m5out/, run/, batch/, the sweeps and parity/. Only the fixed names
 below are removed, and only where a gem5 runner sits beside them.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
@@ -15,19 +15,21 @@ import sys
 import shutil
 import argparse
 
-# Folders the runners create in the directory they are launched from. Matched
-# only at the top of each search root, which is where they land.
+# Every folder a run writes, under results/ at the top of each search root,
+# which is where they land. One .dockerignore line covers the lot, and the
+# pull menu still offers them one at a time.
 ROOT_DIRS = {
-    "m5out":                      "run_gem5.py: gem5's output, stats and binary",
-    "batch_results":              "run_all_gem5_benchmarks.py",
-    "config_testing_sweep_results": "run_config_search_sweep.py",
-    "MinorFlow_sweep_results":    "run_MinorFlow_sweep.py",
+    "results/m5out":            "run_gem5.py: gem5's output, stats, binary",
+    "results/run":              "run_gem5.py: the files worth keeping",
+    "results/batch":            "run_all_gem5_benchmarks.py",
+    "results/sweep_config":     "run_config_search_sweep.py",
+    "results/sweep_MinorFlow":  "run_MinorFlow_sweep.py",
+    "results/parity":           "check_patch_parity.py",
 }
 
 # Folders that appear beside a runner script. Matched at any depth, but only
 # when one of the gem5 runners sits in the same folder.
 SIBLING_DIRS = {
-    "run_results": "run_gem5.py: the files worth keeping",
     "__pycache__": "left behind by python",
 }
 
@@ -60,7 +62,7 @@ REPO_ROOT = repo_root()
 def search_roots():
     """The working directory, the gem5 root, plus this repository. A run
     leaves folders in both: gem5 writes m5out/ where it was launched, and
-    run_results/ lands next to the runner script."""
+    results/ lands at the root the runner was launched from."""
     roots = []
     seen = set()
     for root in (os.getcwd(), REPO_ROOT):
