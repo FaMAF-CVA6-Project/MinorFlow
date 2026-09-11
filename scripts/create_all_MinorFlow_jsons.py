@@ -9,6 +9,7 @@ collected files and the viewer's sample name both expect.
     python3 scripts/create_all_MinorFlow_jsons.py results/run
     python3 scripts/create_all_MinorFlow_jsons.py -j 8
     python3 scripts/create_all_MinorFlow_jsons.py --force   # redo the JSONs
+    python3 scripts/create_all_MinorFlow_jsons.py --no-strict  # allow degraded
 """
 import argparse
 import os
@@ -95,11 +96,12 @@ def main():
     parser.add_argument("--quiet", action="store_true",
                         help="Pass --quiet to the tracer, dropping its "
                              "progress line")
-    parser.add_argument("--strict", action="store_true",
-                        help="Pass --strict to the tracer, so a trace "
-                             "captured without one of the debug-flag line "
-                             "families exits non-zero instead of passing for "
-                             "a complete one. The JSONs are still written.")
+    parser.add_argument("--no-strict", action="store_true",
+                        help="Do not pass --strict to the tracer. By default "
+                             "a trace captured without one of the debug-flag "
+                             "line families counts as degraded, and the batch "
+                             "ends with exit 3. The JSONs are written either "
+                             "way.")
     args = parser.parse_args()
 
     if not os.path.isfile(TRACER):
@@ -138,7 +140,8 @@ def main():
     failed = 0
     degraded = 0
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futures = [pool.submit(run_one, t, j, args.quiet, args.strict)
+        futures = [pool.submit(run_one, t, j, args.quiet,
+                               not args.no_strict)
                    for t, j in todo]
         for future in as_completed(futures):
             line = future.result()
@@ -151,9 +154,11 @@ def main():
     if degraded:
         print(f"[WARN] {degraded} trace(s) converted but degraded. Their "
               f"JSONs are written and metadata.degraded says what is missing.")
-    if failed or degraded:
+    # 3 is the tracer's own code for degraded, kept apart from 1 so a caller
+    # can tell a run where nothing failed from one where something did.
+    if failed:
         return 1
-    return 0
+    return 3 if degraded else 0
 
 
 if __name__ == "__main__":
