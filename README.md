@@ -29,10 +29,10 @@ python3 /path/to/MinorFlow/scripts/run_gem5.py configs/gem5_config_MinorFlow.py 
 
 The current directory has to be the gem5 root, because that is where the script reads `build/`, `include/` and `util/m5/src/abi/riscv/m5op.S`.
 
-Convert the trace to JSON. The driver leaves a copy in `run_results/` next to itself, so that is the shortest path to it:
+Convert the trace to JSON. The driver leaves a copy in `results/run/` next to itself, so that is the shortest path to it:
 
 ```bash
-python3 MinorFlow_tracer.py run_results/daxpy_trace.txt -o trace.json
+python3 MinorFlow_tracer.py results/run/daxpy_trace.txt -o trace.json
 ```
 
 Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window. There is nothing to install and nothing to serve. The viewer is a single self-contained HTML file with no dependencies.
@@ -91,10 +91,10 @@ python3 /path/to/MinorFlow/scripts/run_gem5.py <config>.py <test> [--build NAME]
 What it does, in order:
 
 1. **Compiles.** `riscv64-unknown-elf-gcc` for `rv64gc` with the bit-manipulation and crypto extensions, freestanding (`-nostdlib -nostartfiles -static -mcmodel=medany`), linking gem5's `m5op.S` so the program can call `m5_reset_stats`, `m5_dump_stats` and `m5_exit`. C tests also get `-fno-builtin -e main`, since there is no crt0 to enter through.
-2. **Runs gem5** into `m5out/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `m5out/<test>_trace.txt`. That file is the tracer's input.
-3. **Disassembles.** `objdump -d -S -l` into `m5out/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `m5out/<test>_report.txt`, under a `DISASSEMBLED CODE` banner and closed by an `END OF DISASSEMBLED CODE` one.
-4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. The table is appended to `m5out/<test>_report.txt` below the disassembly, in its own banner, so the two sections can be told apart at a glance. Its title line names the simulator, the program and the L1 geometry the run used, read from gem5's `config.ini`, and the line under it names the configuration file and the flags it was given.
-5. **Copies out the keepers.** The trace, the `.list`, the `_report.txt` and `stats.txt` renamed to `<test>_stats.txt` go into a `run_results/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `m5out/`.
+2. **Runs gem5** into `results/m5out/`, adding the debug flags MinorFlow needs (`Minor`, `MinorTrace`, `MinorTiming`, `CacheAll`, `ExecAll`, `Fetch`, `Decode`, `IEW`, `Commit`, `LSQ`, `Scoreboard`, `Writeback`) and writing `results/m5out/<test>_trace.txt`. That file is the tracer's input.
+3. **Disassembles.** `objdump -d -S -l` into `results/m5out/<test>.list`, printing it up to the `jal` to `m5_dump_stats`, which is where the measured region ends. The printed part is saved as `results/m5out/<test>_report.txt`, under a `DISASSEMBLED CODE` banner and closed by an `END OF DISASSEMBLED CODE` one.
+4. **Prints the table**, parsed from the first statistics block in `stats.txt`, the one delimited by the `m5_reset_stats` and `m5_dump_stats` calls: cycles, instructions, I-cache and D-cache misses and accesses, branches, mispredictions plus unpredicted, elapsed microseconds and IPC. The table is appended to `results/m5out/<test>_report.txt` below the disassembly, in its own banner, so the two sections can be told apart at a glance. Its title line names the simulator, the program and the L1 geometry the run used, read from gem5's `config.ini`, and the line under it names the configuration file and the flags it was given.
+5. **Copies out the keepers.** The trace, the `.list`, the `_report.txt` and `stats.txt` renamed to `<test>_stats.txt` go into a `results/run/` folder next to the script, so a run leaves everything the viewer needs in one place while gem5's own output stays in `results/m5out/`.
 
 If a run fails nothing is deleted, and gem5's whole stdout and stderr are written to `<test>_error.log` in the output folder, with the end of it printed.
 
@@ -171,22 +171,22 @@ python3 /path/to/MinorFlow/scripts/run_all_gem5_benchmarks.py configs/gem5_confi
 python3 scripts/run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
 ```
 
-| Option         | Meaning                                                                                                                                                               |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--configs`    | Which configurations to run, for example `1,4-6`. Defaults to every one in the table                                                                                  |
-| `--tests-dir`  | Where the workloads live. With no value, `MinorFlow_benchmarks/` then `benchmarks/` are looked for in the current directory and beside this repository, in that order |
-| `--tests`      | Comma-separated workloads to run for every configuration, instead of the ones the table names                                                                         |
-| `--out-dir`    | Where results are collected. Defaults to `MinorFlow_sweep_results/`                                                                                                   |
-| `--config`     | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead                                                                                               |
-| `--no-trace`   | Metrics only, no traces                                                                                                                                               |
-| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds                               |
-| `--list`       | Print the plan and exit, touching nothing                                                                                                                             |
+| Option         | Meaning                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--configs`    | Which configurations to run, for example `1,4-6`. Defaults to every one in the table                                                                                      |
+| `--tests-dir`  | Where the workloads live. With no value, `benchmarks/viewer/` then `benchmarks/config/` are looked for in the current directory and beside this repository, in that order |
+| `--tests`      | Comma-separated workloads to run for every configuration, instead of the ones the table names                                                                             |
+| `--out-dir`    | Where results are collected. Defaults to `results/sweep_MinorFlow/`                                                                                                       |
+| `--config`     | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead                                                                                                   |
+| `--no-trace`   | Metrics only, no traces                                                                                                                                                   |
+| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds                                   |
+| `--list`       | Print the plan and exit, touching nothing                                                                                                                                 |
 
 For each configuration it sets `TEST` and runs that entry's workloads through [`scripts/run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
-Results are moved out of `run_results/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_report.config<N>.txt`, `<test>_stats.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from. Every metrics table is also gathered into one file in that folder, named after the run that produced it.
+Results are moved out of `results/run/` into the out directory as `<test>_trace.config<N>.txt`, `<test>_report.config<N>.txt`, `<test>_stats.config<N>.txt` and `<test>.config<N>.list`, which is the naming [tests/](tests/) uses, so one configuration never overwrites another and each trace stays paired with the run it came from. Every metrics table is also gathered into one file in that folder, named after the run that produced it.
 
-Each run works in its own folder under `m5out/` and `run_results/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `scripts/run_gem5.py` run writes into them too.
+Each run works in its own folder under `results/m5out/` and `results/run/`, and once collected that folder is deleted. A run that **fails** is the exception: nothing of its is collected or deleted, so its output stays in `results/m5out/config<N>_<test>/` and is still there at the end. Both parent folders are removed if the sweep leaves them empty, and left alone otherwise, since a plain `scripts/run_gem5.py` run writes into them too.
 
 The sweep never edits `configs/gem5_config_MinorFlow.py`: it writes one temporary copy per configuration with `TEST` set, runs those, and deletes them at the end. So an interrupted sweep leaves nothing to restore, and two sweeps can run at once. Use `--list` first: it prints what each configuration would run, names the closest files for any workload that matches nothing, and calls out configurations left with nothing to run.
 
@@ -216,10 +216,10 @@ Keys: `+` and `-` to zoom, arrows to navigate, `Home` and `End` to jump.
 - A **ready-to-use Docker image** with gem5 already built, so you can produce traces without compiling anything:
 
 ```bash
-docker pull famafcva6/gem5
+docker pull famaf_cva6_project/gem5
 ```
 
-Image: https://hub.docker.com/r/famafcva6/gem5
+Image: https://hub.docker.com/r/famaf_cva6_project/gem5
 
 ## Requirements
 
@@ -268,7 +268,7 @@ Both come out of an undergraduate thesis at FaMAF, Universidad Nacional de Córd
 python3 scripts/clean_MinorFlow_repo.py [-y] [--dry-run] [-v]
 ```
 
-`scripts/clean_gem5_runs.py` is the other one, and clears a gem5 tree rather than this repository: `m5out/`, `batch_results/`, the sweep result folders and the `run_results/` beside each runner. The names say which tree each one touches.
+`scripts/clean_gem5_runs.py` is the other one, and clears a gem5 tree rather than this repository: `results/m5out/`, `results/batch/`, the sweep result folders and the `results/run/` beside each runner. The names say which tree each one touches.
 
 It lists what it found with its size and asks before deleting. The viewer JSONs are left alone and `docs/` is kept whole, since the CARLA 2026 daxpy validation under it is the evidence behind the paper.
 
