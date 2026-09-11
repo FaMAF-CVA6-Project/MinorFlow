@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Remove everything the gem5 run scripts generate, which is all of
 results/: m5out/, run/, batch/, the sweeps and parity/. Only the fixed names
-below are removed, and only where a gem5 runner sits beside them.
+below are removed, results/ at each search root and __pycache__ where a gem5
+runner sits beside it.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
 
-  python3 clean_gem5_runs.py             # list, then ask
-  python3 clean_gem5_runs.py -y          # delete without asking
-  python3 clean_gem5_runs.py --dry-run   # list only
-  python3 clean_gem5_runs.py m5out_daxpy # plus a --gem5-out-dir run
+  python3 scripts/clean_gem5_runs.py             # list, then ask
+  python3 scripts/clean_gem5_runs.py -y          # delete without asking
+  python3 scripts/clean_gem5_runs.py --dry-run   # list only
+  python3 scripts/clean_gem5_runs.py m5out_daxpy # plus a --gem5-out-dir run
 """
 import os
 import sys
