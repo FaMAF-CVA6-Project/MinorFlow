@@ -19,18 +19,22 @@ GEM5_ROOT = os.getcwd()
 
 # Where gem5 writes: stats.txt, the debug trace, the disassembly. This is
 # gem5's own default output folder.
-GEM5_OUT_DIR = "m5out"
+GEM5_OUT_DIR = os.path.join("results", "m5out")
 
-# Folder next to this script where each run leaves a copy of the files worth
-# keeping. The originals stay in GEM5_OUT_DIR.
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "run_results")
+# Where each run leaves a copy of the files worth keeping, under the root
+# rather than beside this script, so everything a run writes is in one place.
+# The originals stay in GEM5_OUT_DIR.
+RESULTS_DIR = os.path.join("results", "run")
 GCC_CMD = "riscv64-unknown-elf-gcc"
 OBJDUMP_CMD = "riscv64-unknown-elf-objdump"
 
-# The two builds living side by side in one gem5 tree, named by their build
-# directory. build/RISCV is the stock one every gem5 checkout already has, so
-# only the patched one has to be built.
+# The builds living side by side in one gem5 tree, named by their build
+# directory. build/RISCV is the stock one every checkout has, so only the
+# patched ones are built.
+#
+# build/RISCV_EXP is a third, for working on the patch. It is reached with
+# --variant patch --build RISCV_EXP rather than by a variant of its own,
+# since its overhead profile is the patched one.
 GEM5_BUILDS = {
     "stock": "RISCV",
     "patch": "RISCV_PATCH",
@@ -48,7 +52,22 @@ PATCH_MARKER = b"Axi2MemPort"
 # The patch a run was built from. The image records the hash of the patch it
 # applied, so a table says which transcription produced it and an edited but
 # unrebuilt patch is caught before the numbers are believed.
-PATCH_FILE = os.path.join(GEM5_ROOT, "MinorCPU_CVA6.patch")
+
+
+def find_patch():
+    """The patch to hash. configs/ is the copy a push refreshes, and the one
+    at the root is what the image applied, so the first is authoritative and
+    the second is the fallback for an image built before configs/ existed."""
+    for rel in (os.path.join("gem5_configs", "config",
+                             "MinorCPU_CVA6.patch"),
+                "MinorCPU_CVA6.patch"):
+        candidate = os.path.join(GEM5_ROOT, rel)
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(GEM5_ROOT, "MinorCPU_CVA6.patch")
+
+
+PATCH_FILE = find_patch()
 BUILT_PATCH_HASH = os.path.join(GEM5_ROOT, ".built_patch_sha1")
 M5_INCLUDE = os.path.join(GEM5_ROOT, "include")
 M5_OP_ASM = os.path.join(GEM5_ROOT, "util/m5/src/abi/riscv/m5op.S")
@@ -198,13 +217,17 @@ def resolve_input(path):
         return path
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)
-    for base in (repo, here):
+    # The current directory first, which in the container is the root holding
+    # configs/ and benchmarks/, then this script's own repository.
+    for base in (os.curdir, repo, here):
         candidate = os.path.join(base, path)
         if os.path.exists(candidate):
             return candidate
-        # Also try the bare name inside the repository's usual folders, so
-        # 'daxpy.S' finds benchmarks/daxpy.S the way the READMEs write it.
-        for sub in ("benchmarks", "configs"):
+        # Also the bare name inside the usual folders, so 'daxpy.S' finds
+        # benchmarks/config/daxpy.S and 'gem5_config_CVA6.py' finds
+        # configs/gem5_config_CVA6.py, the way the READMEs write them.
+        for sub in ("gem5_configs", "configs", "benchmarks/config",
+                    "benchmarks/viewer", "benchmarks"):
             candidate = os.path.join(base, sub, os.path.basename(path))
             if os.path.exists(candidate):
                 return candidate
@@ -643,7 +666,7 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
 
 
 def collect_results(program_name, out_dir, results_dir):
-    """Copy the four files worth keeping into run_results/. The trace is what
+    """Copy the four files worth keeping into results/run/. The trace is what
     the viewer renders, the .list the disassembly, the _report.txt the measured
     region plus the metrics table, and the stats gem5's own numbers."""
     try:
@@ -856,13 +879,13 @@ if __name__ == "__main__":
         epilog="Any flag this script does not define is passed on to the "
                "configuration,\nso a configuration's own options work here:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_Patch.py daxpy.S "
+               "  run_gem5.py gem5_config_CVA6_patch.py daxpy.S "
                "--no-port-model --no-fill-phase\n"
                "\n"
                "Put them after a '--' when a flag takes a value or shares a "
                "name with\none of ours:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_Patch.py daxpy.S -- "
+               "  run_gem5.py gem5_config_CVA6_patch.py daxpy.S -- "
                "--no-port-model")
     parser.add_argument("config_file",
                         help="Path to the gem5 configuration file (.py)")
@@ -890,7 +913,8 @@ if __name__ == "__main__":
     parser.add_argument("--build", default=None, metavar="NAME",
                         help="Run a different build: a directory name under "
                              "build/, a path to one, or a path to the binary "
-                             "itself. The overhead profile still follows "
+                             "itself. RISCV_EXP is the one for working on the "
+                             "patch. The overhead profile still follows "
                              "--variant")
     parser.add_argument("--no-trace", action="store_true",
                         help="Disable collection of detailed debug traces.")
@@ -901,7 +925,7 @@ if __name__ == "__main__":
                              f"overwrite each other's stats.txt")
     parser.add_argument("--results-dir", default=RESULTS_DIR,
                         help="Where the four files worth keeping are "
-                             "copied. Defaults to run_results/ next to this "
+                             "copied. Defaults to results/run/ under the "
                              "script")
 
     own_argv, after_separator = split_own_args(sys.argv[1:])
