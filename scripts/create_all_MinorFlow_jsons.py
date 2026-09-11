@@ -6,7 +6,7 @@ daxpy_trace.config1.txt becomes daxpy.config1.json, which is what the sweep's
 collected files and the viewer's sample name both expect.
 
     python3 scripts/create_all_MinorFlow_jsons.py        # the whole repository
-    python3 scripts/create_all_MinorFlow_jsons.py run_results
+    python3 scripts/create_all_MinorFlow_jsons.py results/run
     python3 scripts/create_all_MinorFlow_jsons.py -j 8
     python3 scripts/create_all_MinorFlow_jsons.py --force   # redo the JSONs
 """
@@ -21,8 +21,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # The fork's own traces are handled by scripts/create_all_CVA6_repo_jsons.py,
 # which walks the whole checkout and calls this one for the submodule.
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(HERE)
-TRACER = os.path.join(REPO_ROOT, "MinorFlow_tracer.py")
+
+
+def find_tracer():
+    """(tracer, the folder it sits in). In this repository the
+    tracer is one level above scripts/, and in a container
+    scripts/ is the root with the viewer a folder below it."""
+    above = os.path.dirname(HERE)
+    for base in (above, os.path.join(above, "MinorFlow"),
+                 os.path.join(os.curdir, "MinorFlow")):
+        candidate = os.path.join(base, "MinorFlow_tracer.py")
+        if os.path.isfile(candidate):
+            return candidate, base
+    return os.path.join(above, "MinorFlow_tracer.py"), above
+
+
+TRACER, REPO_ROOT = find_tracer()
 
 # Traces are read at a few tens of MB/s each and a large one holds a lot of
 # state, so this is deliberately below the core count. Each worker only waits
