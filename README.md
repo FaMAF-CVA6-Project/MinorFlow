@@ -66,7 +66,7 @@ python3 MinorFlow_tracer.py <trace> [-o OUT] [--stats] [--quiet] [--tpc TICKS]
 
 The tracer reads the file twice: pass 1 works out the tick period, pass 2 builds the records. Pass 1 stops once it has seen enough distinct ticks to settle the answer, so it costs a fraction of the file rather than all of it, and `--tpc` skips it entirely when the clock is already known.
 
-`scripts/create_all_MinorFlow_jsons.py` converts a whole folder of traces at once, skipping the ones whose JSON is already newer, and lets the tracer's progress line through so a multi-gigabyte conversion does not look hung.
+`scripts/create_all_MinorFlow_jsons.py` converts a whole folder of traces at once, skipping the ones whose JSON is already newer, and lets the tracer's progress line through so a multi-gigabyte conversion does not look hung. It passes `--strict` to the tracer by default, so a degraded trace ends the batch with exit 3 while its JSON is still written, and `--no-strict` turns that off.
 
 ## Running a test: `scripts/run_gem5.py`
 
@@ -171,16 +171,16 @@ python3 /path/to/MinorFlow/scripts/run_all_gem5_benchmarks.py configs/gem5_confi
 python3 scripts/run_MinorFlow_sweep.py [--configs 1,4-6] [--tests-dir DIR] [--build NAME] [--no-trace] [--list]
 ```
 
-| Option         | Meaning                                                                                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--configs`    | Which configurations to run, for example `1,4-6`. Defaults to every one in the table                                                                                      |
-| `--tests-dir`  | Where the workloads live. With no value, `benchmarks/viewer/` then `benchmarks/config/` are looked for in the current directory and beside this repository, in that order |
-| `--tests`      | Comma-separated workloads to run for every configuration, instead of the ones the table names                                                                             |
-| `--out-dir`    | Where results are collected. Defaults to `results/sweep_MinorFlow/`                                                                                                       |
-| `--config`     | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead                                                                                                   |
-| `--no-trace`   | Metrics only, no traces                                                                                                                                                   |
-| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds                                   |
-| `--list`       | Print the plan and exit, touching nothing                                                                                                                                 |
+| Option         | Meaning                                                                                                                                                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--configs`    | Which configurations to run, for example `1,4-6`. Defaults to every one in the table                                                                                                                                    |
+| `--tests-dir`  | Where the workloads live. With no value, `benchmarks/viewer/`, `benchmarks/config/` and then this repository's own flat `benchmarks/` are looked for in the current directory and beside this repository, in that order |
+| `--tests`      | Comma-separated workloads to run for every configuration, instead of the ones the table names                                                                                                                           |
+| `--out-dir`    | Where results are collected. Defaults to `results/sweep_MinorFlow/`                                                                                                                                                     |
+| `--config`     | Sweep a copy or a variant of `configs/gem5_config_MinorFlow.py` instead                                                                                                                                                 |
+| `--no-trace`   | Metrics only, no traces                                                                                                                                                                                                 |
+| `-j`, `--jobs` | How many runs to keep in flight. Defaults to 4. gem5 is single-threaded, so this scales with cores until memory or disk bandwidth binds                                                                                 |
+| `--list`       | Print the plan and exit, touching nothing                                                                                                                                                                               |
 
 For each configuration it sets `TEST` and runs that entry's workloads through [`scripts/run_gem5.py`](#running-a-test-run_gem5py). An entry whose workload is `all` runs every workload the table names.
 
@@ -258,7 +258,7 @@ If you use MinorFlow in academic work, please cite it. [CITATION.cff](CITATION.c
 
 [CVA6Flow](https://github.com/FaMAF-CVA6-Project/CVA6Flow) is the sibling tool. It visualises the CORE-V CVA6 RISC-V core running under Verilator, reconstructed from raw VCD signal dumps, and is deliberately built to look and behave like MinorFlow so that a simulated pipeline and a real RTL pipeline can be compared side by side.
 
-Both come out of an undergraduate thesis at FaMAF, Universidad Nacional de Córdoba, asking how closely a gem5 MinorCPU configuration can be made to match a real RISC-V core.
+Both come out of a thesis at FaMAF, Universidad Nacional de Córdoba, asking how closely a gem5 MinorCPU configuration can be made to match a real RISC-V core.
 
 ## Cleaning up
 
