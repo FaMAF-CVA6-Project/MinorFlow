@@ -17,8 +17,9 @@ import time
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-# Default folder, relative to the gem5 root.
-DEFAULT_TESTS_DIR = "benchmarks"
+# Default folder, relative to the gem5 root. One folder per suite, since
+# the overhead tables are indexed by suite and the templates differ.
+DEFAULT_TESTS_DIR = "benchmarks/config"
 
 # The driver this script delegates to, looked up next to it and then in cwd.
 RUNNER_NAME = "run_gem5.py"
@@ -28,10 +29,10 @@ RUNNER_NAME = "run_gem5.py"
 GEM5_BINARY_NAMES = ("gem5.opt", "gem5.fast", "gem5.debug")
 
 # Where run_gem5.py has gem5 write, cleared after each collected run.
-GEM5_OUT_DIR = "m5out"
+GEM5_OUT_DIR = os.path.join("results", "m5out")
 
 # Where the batch gathers what it keeps, one folder for the whole run.
-DEFAULT_OUT_DIR = "batch_results"
+DEFAULT_OUT_DIR = os.path.join("results", "batch")
 
 # Tests to run at a time. Deliberately below the core count: each run holds
 # a gem5 process and writes a trace, so memory and disk bind before cores do.
@@ -49,6 +50,19 @@ TEMPLATE_MARKER = "template"
 METRICS_MARKER = "RESULTS TABLE"
 
 SEP = "=" * 70
+
+
+def resolve_config(path):
+    """A configuration named alone, found in configs/. run_gem5.py resolves
+    the same way, so the two agree on what a bare name means."""
+    if os.path.isfile(path):
+        return path
+    for folder in ("gem5_configs", os.path.join("gem5_configs", "config"),
+                   os.path.join("gem5_configs", "viewer"), "configs"):
+        candidate = os.path.join(folder, os.path.basename(path))
+        if os.path.isfile(candidate):
+            return candidate
+    return path
 
 
 def slug(text, limit=40):
@@ -141,10 +155,10 @@ def warn_duplicates(tests, folder):
           "rename them.\n")
 
 
-def driver_results_dir(runner):
-    """The run_results/ folder run_gem5.py copies its keepers into."""
-    return os.path.join(os.path.dirname(os.path.abspath(runner)),
-                        "run_results")
+def driver_results_dir():
+    """The results/run/ folder run_gem5.py copies its keepers into, under the
+    gem5 root, which is the directory the driver is run from."""
+    return os.path.join("results", "run")
 
 
 def job_dirs(runner, label):
@@ -152,7 +166,7 @@ def job_dirs(runner, label):
     concurrent runs cannot overwrite each other's stats.txt, trace or
     binary."""
     return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(runner), label))
+            os.path.join(driver_results_dir(), label))
 
 
 def collect(job_results, out_dir, want_trace):
@@ -360,6 +374,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
 
+    args.config_file = resolve_config(args.config_file)
     if not os.path.isfile(args.config_file):
         print(f"[ERROR] The configuration file '{args.config_file}' does not "
               f"exist")
@@ -537,7 +552,7 @@ def main():
               f"{os.path.abspath(GEM5_OUT_DIR)}")
     # Whatever the batch emptied goes, anything a plain run_gem5.py run left
     # in there stays.
-    prune_empty(driver_results_dir(runner))
+    prune_empty(driver_results_dir())
     prune_empty(GEM5_OUT_DIR)
     return 1 if failed else 0
 
