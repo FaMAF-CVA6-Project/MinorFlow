@@ -224,10 +224,11 @@ def resolve_input(path):
         if os.path.exists(candidate):
             return candidate
         # Also the bare name inside the usual folders, so 'daxpy.S' finds
-        # benchmarks/config/daxpy.S and 'gem5_config_CVA6.py' finds
-        # configs/gem5_config_CVA6.py, the way the READMEs write them.
-        for sub in ("gem5_configs", "configs", "benchmarks/config",
-                    "benchmarks/viewer", "benchmarks"):
+        # benchmarks/config/daxpy.S and a configuration its gem5_configs/
+        # folder. The frozen CARLA2026 copy is last, so the live one wins.
+        for sub in ("gem5_configs/config", "gem5_configs/viewer", "configs",
+                    "benchmarks/config", "benchmarks/viewer", "benchmarks",
+                    "gem5_configs/CARLA2026"):
             candidate = os.path.join(base, sub, os.path.basename(path))
             if os.path.exists(candidate):
                 return candidate
