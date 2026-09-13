@@ -55,8 +55,10 @@ EXTERNAL_SCRIPTS = {
     "CVA6Flow_tracer.py",            # the sibling viewer
     # In the CVA6 fork:
     "check_CVA6_repo.py",
+    "docker_run.py",
+    "make_containers.py",
     "create_all_CVA6_repo_jsons.py",
-    "run_config_search_sweep.py",
+    "run_gem5_config_sweep.py",
     "check_patch_parity.py",
     "gem5_config_CVA6.py",
     "gem5_config_CVA6_patch.py",
