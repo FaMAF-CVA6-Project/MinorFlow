@@ -106,7 +106,7 @@ ERROR_TAIL_LINES = 40
 # ==============================================================================
 # Scaffolding around the measured region, subtracted to get NET. Indexed by
 # suite, build and language. 'config' is the set in benchmarks/gem5/, 'viewer'
-# the teaching set: different templates, so the two are not interchangeable.
+# the viewer's own set: different templates, so they are not interchangeable.
 OVERHEAD_SUITES = {
     "config": {
         "patch": {
@@ -899,7 +899,7 @@ if __name__ == "__main__":
                         default=None,
                         help="Which overhead table to subtract. 'config' is "
                              "the calibration benchmarks, 'viewer' the "
-                             "MinorFlow teaching set. Defaults to "
+                             "MinorFlow development set. Defaults to "
                              "the folder the test came from")
     parser.add_argument("--variant", choices=sorted(GEM5_BUILDS),
                         default=DEFAULT_VARIANT,
