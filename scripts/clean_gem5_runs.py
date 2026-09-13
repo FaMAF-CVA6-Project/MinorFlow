@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Remove everything the gem5 run scripts generate, which is all of
 results/: m5out/, run/, batch/, the sweeps and parity/. Only the fixed names
-below are removed, results/ at each search root and __pycache__ where a gem5
-runner sits beside it.
+below are removed, results/ at each search root and every __pycache__ under
+it, which a container collects from scons as well as from these scripts.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
 
@@ -23,19 +23,16 @@ ROOT_DIRS = {
     "results/m5out":            "run_gem5.py: gem5's output, stats, binary",
     "results/run":              "run_gem5.py: the files worth keeping",
     "results/batch":            "run_all_gem5_benchmarks.py",
-    "results/sweep_config":     "run_config_search_sweep.py",
+    "results/sweep_gem5_config":     "run_gem5_config_sweep.py",
     "results/sweep_MinorFlow":  "run_MinorFlow_sweep.py",
     "results/parity":           "check_patch_parity.py",
 }
 
-# Folders that appear beside a runner script. Matched at any depth, but only
-# when one of the gem5 runners sits in the same folder.
-SIBLING_DIRS = {
+# Deleted wherever they appear under a search root. A container collects
+# these under every folder it runs a script from, not only beside the runners.
+ANY_DEPTH_DIRS = {
     "__pycache__": "left behind by python",
 }
-
-RUNNERS = {"run_gem5.py", "run_all_gem5_benchmarks.py",
-           "run_config_search_sweep.py", "run_MinorFlow_sweep.py"}
 
 # Never descended into. These cannot hold a generated folder, and build/ holds
 # the gem5.opt binary the runners call, so walking it is pure cost.
@@ -102,15 +99,14 @@ def find_targets(roots, extra):
         for name, reason in ROOT_DIRS.items():
             add(os.path.join(root, name), reason)
 
-        for dirpath, dirnames, filenames in os.walk(root):
-            beside_runner = RUNNERS.intersection(filenames)
+        for dirpath, dirnames, _ in os.walk(root):
             keep = []
             for name in dirnames:
                 full = os.path.join(dirpath, name)
                 if os.path.realpath(full) in seen:
                     continue          # already taken, and taken whole
-                if name in SIBLING_DIRS and beside_runner:
-                    add(full, SIBLING_DIRS[name])
+                if name in ANY_DEPTH_DIRS:
+                    add(full, ANY_DEPTH_DIRS[name])
                 elif name not in PRUNE_DIRS and not name.startswith("."):
                     keep.append(name)
             dirnames[:] = keep
