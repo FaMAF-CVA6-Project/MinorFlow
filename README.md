@@ -41,7 +41,7 @@ Then open `MinorFlow.html` in any browser and drag `trace.json` onto the window.
 
 ### The sample trace
 
-The landing page offers a sample, and the button appears only when the sample is actually there, so it is never a dead end. It is not committed by default, because of its size. `scripts/make_MinorFlow_sample.py` trims a full tracer JSON down to one:
+The landing page offers the samples in `tests/`. Served, it reads the folder listing and offers **every** `.js` sample in there, by name, so a folder of them is a menu rather than one fixed file. Opened from disk or from GitHub Pages, where there is no listing to read, it falls back to the shipped `tests/daxpy.config1.js`. Either way the button appears only when a sample is actually there, so it is never a dead end. It is not committed by default, because of its size. `scripts/make_MinorFlow_sample.py` trims a full tracer JSON down to one:
 
 ```bash
 python3 scripts/make_MinorFlow_sample.py daxpy.json                 # -> tests/daxpy.config1.{json,js}
@@ -216,10 +216,21 @@ Keys: `+` and `-` to zoom, arrows to navigate, `Home` and `End` to jump.
 - A **ready-to-use Docker image** with gem5 already built, so you can produce traces without compiling anything:
 
 ```bash
-docker pull famaf_cva6_project/gem5
+docker pull manuel313/famaf_gem5
 ```
 
-Image: https://hub.docker.com/r/famaf_cva6_project/gem5
+Image: https://hub.docker.com/r/manuel313/famaf_gem5
+
+## Serving it from a container: `scripts/serve_MinorFlow.py`
+
+A container has no browser. This serves the page and its JSONs over HTTP, so the trace and the JSON stay inside while the page opens on the host:
+
+```bash
+python3 scripts/serve_MinorFlow.py              # port 8000, from the container root
+python3 scripts/serve_MinorFlow.py --port 9000
+```
+
+The port has to be published when the container is created. The project's images take 8000 on the host for this side, so the page is at `http://localhost:8000/MinorFlow/MinorFlow.html`. The two viewers take different host ports, so both can be served at once.
 
 ## Requirements
 
