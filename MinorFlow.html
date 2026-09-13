@@ -1123,9 +1123,14 @@
       --debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS
     </p>
     <p style="font-size:10px;margin-top:4px">Keys: + / − to zoom · arrows to navigate · Home/End to jump</p>
-    <button id="load-sample-btn" onclick="event.stopPropagation(); loadSample()"
-      style="margin-top:18px;padding:8px 18px;font-size:12px;font-weight:600;cursor:pointer;color:#fff;background:#1f6feb;border:0;border-radius:6px">Load
-      sample trace (DAXPY)</button>
+    <div id="sample-picker"
+      style="margin-top:18px;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap">
+      <select id="sample-select" onclick="event.stopPropagation()"
+        style="display:none;padding:7px 10px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text)"></select>
+      <button id="load-sample-btn" onclick="event.stopPropagation(); loadSample()"
+        style="display:none;padding:8px 18px;font-size:12px;font-weight:600;cursor:pointer;color:#fff;background:#1f6feb;border:0;border-radius:6px">Load
+        sample</button>
+    </div>
   </div>
 
   <!-- ═══════════════════════════════ MAIN VIEW ══════════════════════════════ -->
@@ -2336,54 +2341,95 @@
     /* Nothing is loaded yet, so neither band has anything to draw. */
     document.addEventListener('DOMContentLoaded', syncHeldToggles);
 
-    /* Optional sample trace. Generate it into tests/
-     * to enable the sample button. When served the JSON is fetched, under
-     * file:// a script tag sets window.__SAMPLE_TRACE__ instead. */
-    const SAMPLE_URL = 'tests/daxpy.config1.json';
-    const SAMPLE_URL_JS = 'tests/daxpy.config1.js';
+    /* Samples. Every tests/*.js sets window.__SAMPLE_TRACE__, so one load
+     * path works both served and under file://. The list is read from the
+     * folder listing where one is served, which is what the container's server
+     * gives, and falls back to the sample the repository ships where there is
+     * no listing, such as GitHub Pages or a page opened from disk. */
+    const SAMPLE_DIR = 'tests/';
+    const SAMPLE_FALLBACK = 'daxpy.config1.js';
+    let sampleFiles = [];
 
-    function probeSample() {
+    function sampleSelect() {
+      return document.getElementById('sample-select');
+    }
+
+    async function listSamples() {
+      try {
+        const resp = await fetch(SAMPLE_DIR);
+        if (!resp.ok) return [];
+        const doc = new DOMParser().parseFromString(await resp.text(), 'text/html');
+        const names = [...doc.querySelectorAll('a[href]')]
+          .map(a => decodeURIComponent(a.getAttribute('href') || ''))
+          .map(h => h.split('/').pop())
+          .filter(n => n.toLowerCase().endsWith('.js'));
+        return [...new Set(names)].sort();
+      } catch (e) { return []; }
+    }
+
+    async function probeSample() {
       const btn = document.getElementById('load-sample-btn');
       if (!btn) return;
-      btn.style.display = 'none';
-      const show = () => { btn.style.display = ''; };
-      const viaScript = () => {
-        const s = document.createElement('script');
-        s.src = SAMPLE_URL_JS;
-        s.onload = () => { if (window.__SAMPLE_TRACE__) show(); s.remove(); };
-        s.onerror = () => { s.remove(); };
-        document.head.appendChild(s);
+      sampleFiles = await listSamples();
+      if (sampleFiles.length) {
+        const sel = sampleSelect();
+        if (sel) {
+          sel.innerHTML = '';
+          for (const name of sampleFiles) {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name.replace(/\.js$/, '');
+            sel.appendChild(opt);
+          }
+          sel.style.display = sampleFiles.length > 1 ? '' : 'none';
+        }
+        btn.style.display = '';
+        return;
+      }
+      /* No listing to read, so the shipped sample is probed by loading it. */
+      const s = document.createElement('script');
+      s.src = SAMPLE_DIR + SAMPLE_FALLBACK;
+      s.onload = () => {
+        if (window.__SAMPLE_TRACE__) {
+          sampleFiles = [SAMPLE_FALLBACK];
+          btn.style.display = '';
+        }
+        try { delete window.__SAMPLE_TRACE__; }
+        catch (e) { window.__SAMPLE_TRACE__ = undefined; }
+        s.remove();
       };
-      try {
-        fetch(SAMPLE_URL, { method: 'GET' })
-          .then(r => { if (r.ok) show(); else viaScript(); })
-          .catch(viaScript);
-      } catch (e) { viaScript(); }
+      s.onerror = () => { s.remove(); };
+      document.head.appendChild(s);
     }
     document.addEventListener('DOMContentLoaded', probeSample);
 
-    function loadSample() {
-      showLoading('loading sample\u2026');
-      fetch(SAMPLE_URL)
-        .then(resp => { if (!resp.ok) throw new Error('http ' + resp.status); return resp.json(); })
-        .then(finishSample)
-        .catch(() => loadSampleViaScript());
+    function chosenSample() {
+      const sel = sampleSelect();
+      if (sel && sel.value) return sel.value;
+      return sampleFiles[0] || SAMPLE_FALLBACK;
     }
 
-    function loadSampleViaScript() {
+    function loadSample() {
+      const name = chosenSample();
+      showLoading('loading ' + name.replace(/\.js$/, '') + '\u2026');
       const s = document.createElement('script');
-      s.src = SAMPLE_URL_JS;
+      s.src = SAMPLE_DIR + name;
       s.onload = () => {
         const data = window.__SAMPLE_TRACE__;
-        try { delete window.__SAMPLE_TRACE__; } catch (e) { window.__SAMPLE_TRACE__ = undefined; }
+        try { delete window.__SAMPLE_TRACE__; }
+        catch (e) { window.__SAMPLE_TRACE__ = undefined; }
         s.remove();
-        if (!data) { hideLoading(); alert('The sample file loaded but did not set window.__SAMPLE_TRACE__. Check "' + SAMPLE_URL_JS + '".'); return; }
+        if (!data) {
+          hideLoading();
+          alert('"' + SAMPLE_DIR + name + '" loaded but did not set window.__SAMPLE_TRACE__.');
+          return;
+        }
         finishSample(data);
       };
       s.onerror = () => {
         s.remove();
         hideLoading();
-        alert('Could not load the sample trace.\n\nLooked for "' + SAMPLE_URL + '" (served) and "' + SAMPLE_URL_JS + '" (local), relative to this page.\n\nMake sure the sample is present next to this file, or drag a trace onto the window instead.');
+        alert('Could not load "' + SAMPLE_DIR + name + '", relative to this page.\n\nDrag a JSON onto the window instead.');
       };
       document.head.appendChild(s);
     }
@@ -2398,7 +2444,11 @@
       }
       loadFromJson(data);
       const tn = document.getElementById('tracename');
-      if (tn) { tn.textContent = 'DAXPY config1 (sample)'; tn.title = SAMPLE_URL; }
+      if (tn) {
+        const name = chosenSample().replace(/\.js$/, '');
+        tn.textContent = name + ' (sample)';
+        tn.title = SAMPLE_DIR + chosenSample();
+      }
       hideLoading();
     }
 
