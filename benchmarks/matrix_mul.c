@@ -1,5 +1,8 @@
 #include <gem5/m5ops.h>
 
+/* Exercises the issue and commit widths: 4 by 4 integer matrix products,
+ * 16 times over, multiply-heavy and branch-light. */
+
 #define N 4
 
 static int A[N][N];

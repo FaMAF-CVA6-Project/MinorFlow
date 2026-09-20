@@ -17,7 +17,8 @@ int main(void)
     m5_reset_stats(0, 0);
 
     // MAIN PROGRAM
-    for (int i = 0; i < N; i += 16) /* stride 16 ints = 64 B = one line per store */
+    /* A stride of 16 ints is 64 bytes, one 64-byte cache block per store. */
+    for (int i = 0; i < N; i += 16)
         arr[i] = i;
     // END OF MAIN PROGRAM
 

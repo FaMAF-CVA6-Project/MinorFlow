@@ -1,5 +1,9 @@
 #include <gem5/m5ops.h>
 
+/* Exercises the I-cache and the fetch path: 256 small functions reached
+ * through a switch in a shuffled order, eight times over, so the later passes
+ * fetch code the first pass brought into the cache. */
+
 #define CAT_(a, b) a##b
 #define CAT(a, b) CAT_(a, b)
 

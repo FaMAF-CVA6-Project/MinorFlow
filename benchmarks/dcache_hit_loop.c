@@ -21,7 +21,8 @@ int main(void)
     // MAIN PROGRAM
     long sum = 0;
 
-    /* Warm-up pass: compulsory misses fill the cache, not measured. */
+    /* Warm-up pass: compulsory misses fill the cache before the hit passes.
+     * It is inside the measured region, so its misses are counted too. */
     for (int i = 0; i < N; i++)
         sum += arr[i];
 

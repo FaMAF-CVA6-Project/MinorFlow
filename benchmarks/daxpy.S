@@ -1,17 +1,17 @@
   .data
 N:
-  .dword   4096           # Size of the vectors
+  .dword   4096
 Alpha:
-  .dword   2              # Scalar multiplier
+  .dword   2
 
   .bss
   .align   3
 X:
-  .zero    32768          # Vector X (4096)*8 bytes
+  .zero    32768
 Y:
-  .zero    32768          # Vector Y (4096)*8 bytes
+  .zero    32768
 Z:
-  .zero    32768          # Vector Z (4096)*8 bytes
+  .zero    32768
 
   .section .text
   .global  main
@@ -24,37 +24,40 @@ main:
 # -----------------------------------------------------------
 # MAIN PROGRAM
 # -----------------------------------------------------------
-  la       t0, N          # Address of N
-  ld       t1, 0(t0)      # t1 = N
+  la       t0, N
+  ld       t1, 0(t0)
 
-  la       t2, Alpha      # Address of Alpha
-  ld       t3, 0(t2)      # t3 = Alpha (integer)
-  fcvt.d.l f10, t3        # f10 = (double) Alpha
+  la       t2, Alpha
+  ld       t3, 0(t2)
+  fcvt.d.l f10, t3
 
-  la       s2, X          # Base of X
-  la       s3, Y          # Base of Y
-  la       s4, Z          # Base of Z
+  la       s2, X
+  la       s3, Y
+  la       s4, Z
 
-  mv       s5, s2         # Offset X -> s5
-  mv       s6, s3         # Offset Y -> s6
-  mv       s7, s4         # Offset Z -> s7
+  mv       s5, s2         # Cursor into X
+  mv       s6, s3         # Cursor into Y
+  mv       s7, s4         # Cursor into Z
 
-  li       t4, 0          # Loop index i = 0
+  li       t4, 0
 
+# Z[i] = alpha * X[i] + Y[i], into a third vector for three 32 KiB streams
+# through the 32 KiB D-cache, two in DAXPY's in-place form. The loop starts on
+# a 16-byte boundary, so it opens a fetch line at every width the sweep uses.
   .align   4
 loop:
-  fld      f5, 0(s5)      # f5 = X[i]
-  fld      f6, 0(s6)      # f6 = Y[i]
-  fmul.d   f7, f10, f5    # f7 = alpha * X[i]
-  fadd.d   f8, f7, f6     # f8 = f7 + Y[i]
-  fsd      f8, 0(s7)      # Z[i] = f8
+  fld      f5, 0(s5)
+  fld      f6, 0(s6)
+  fmul.d   f7, f10, f5
+  fadd.d   f8, f7, f6
+  fsd      f8, 0(s7)
 
   addi     s5, s5, 8
   addi     s6, s6, 8
   addi     s7, s7, 8
 
-  addi     t4, t4, 1      # i++
-  blt      t4, t1, loop   # while i < N
+  addi     t4, t4, 1
+  blt      t4, t1, loop
 # -----------------------------------------------------------
 # END OF MAIN PROGRAM
 # -----------------------------------------------------------
@@ -63,10 +66,11 @@ loop:
   li       a1, 0
   call     m5_dump_stats
 
-# PADDING
+# Padding, so what the front end fetches past the call to m5_dump_stats
+# before the stats are dumped is nops, which predict no branch, and never
+# the call to m5_exit.
   .rept    50
   nop
   .endr
 
-# EXIT
   call     m5_exit

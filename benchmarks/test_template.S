@@ -17,10 +17,11 @@ main:
   li       a1, 0
   call     m5_dump_stats
 
-# PADDING
+# Padding, so what the front end fetches past the call to m5_dump_stats
+# before the stats are dumped is nops, which predict no branch, and never
+# the call to m5_exit.
   .rept    50
   nop
   .endr
 
-# EXIT
   call     m5_exit
