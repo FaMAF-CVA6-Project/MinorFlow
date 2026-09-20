@@ -1,18 +1,20 @@
+# type: ignore
+# The m5 and gem5 packages exist only inside gem5, so this file cannot be
+# type-checked outside it.
 import argparse
 
-from m5.params import NULL  # type: ignore
-from gem5.components.boards.simple_board import SimpleBoard  # type: ignore
-from gem5.components.processors.base_cpu_core import BaseCPUCore  # type: ignore
-from gem5.components.processors.base_cpu_processor import BaseCPUProcessor  # type: ignore
-from gem5.components.memory.simple import SingleChannelSimpleMemory  # type: ignore
-from gem5.components.cachehierarchies.classic.private_l1_cache_hierarchy import (  # type: ignore
-    PrivateL1CacheHierarchy,
-)
-from gem5.isas import ISA  # type: ignore
-from gem5.simulate.simulator import Simulator  # type: ignore
-from gem5.resources.resource import BinaryResource  # type: ignore
+from m5.params import NULL
+from gem5.components.boards.simple_board import SimpleBoard
+from gem5.components.processors.base_cpu_core import BaseCPUCore
+from gem5.components.processors.base_cpu_processor import BaseCPUProcessor
+from gem5.components.memory.simple import SingleChannelSimpleMemory
+from gem5.components.cachehierarchies.classic.private_l1_cache_hierarchy \
+    import PrivateL1CacheHierarchy
+from gem5.isas import ISA
+from gem5.simulate.simulator import Simulator
+from gem5.resources.resource import BinaryResource
 
-from m5.objects import (  # type: ignore
+from m5.objects import (
     LocalBP,
     LRURP,
     MinorFUPool,
@@ -62,12 +64,12 @@ class RISCVFUPool(MinorFUPool):
         int_div.opLat = 20
         int_div.issueLat = 20
 
-        fp_fast_A = MinorFU(
+        fp_fast_a = MinorFU(
             opClasses=minorMakeOpClassSet(['FloatAdd', 'FloatCvt']),
             opLat=3, issueLat=1
         )
 
-        fp_fast_B = MinorFU(
+        fp_fast_b = MinorFU(
             opClasses=minorMakeOpClassSet(['FloatMult', 'FloatMultAcc']),
             opLat=4, issueLat=1
         )
@@ -106,11 +108,13 @@ class RISCVFUPool(MinorFUPool):
         simd_complex.opClasses = minorMakeOpClassSet([
             'SimdAddAcc', 'SimdCvt', 'SimdMult', 'SimdMultAcc',
             'SimdFloatAdd', 'SimdFloatAlu', 'SimdFloatCmp', 'SimdFloatCvt',
-            'SimdFloatMisc', 'SimdFloatMult', 'SimdFloatMultAcc', 'SimdFloatExt',
+            'SimdFloatMisc', 'SimdFloatMult', 'SimdFloatMultAcc',
+            'SimdFloatExt',
             'SimdReduceAdd', 'SimdReduceAlu', 'SimdReduceCmp',
             'SimdFloatReduceAdd', 'SimdFloatReduceCmp',
             'SimdAes', 'SimdAesMix', 'SimdSha1Hash', 'SimdSha1Hash2',
-            'SimdSha256Hash', 'SimdSha256Hash2', 'SimdShaSigma2', 'SimdShaSigma3'
+            'SimdSha256Hash', 'SimdSha256Hash2', 'SimdShaSigma2',
+            'SimdShaSigma3'
         ])
         simd_complex.timings = [MinorFUTiming(
             description='SimdComplex', srcRegsRelativeLats=[2])]
@@ -152,7 +156,8 @@ class RISCVFUPool(MinorFUPool):
             'SimdWholeRegisterLoad', 'SimdWholeRegisterStore'
         ])
         vec_mem_fast.timings = [MinorFUTiming(
-            description='VecMemFast', srcRegsRelativeLats=[1], extraAssumedLat=2)]
+            description='VecMemFast', srcRegsRelativeLats=[1],
+            extraAssumedLat=2)]
         vec_mem_fast.opLat = 2
         vec_mem_fast.issueLat = 1
 
@@ -162,7 +167,8 @@ class RISCVFUPool(MinorFUPool):
             'SimdIndexedLoad', 'SimdIndexedStore'
         ])
         vec_mem_slow.timings = [MinorFUTiming(
-            description='VecMemSlow', srcRegsRelativeLats=[1], extraAssumedLat=2)]
+            description='VecMemSlow', srcRegsRelativeLats=[1],
+            extraAssumedLat=2)]
         vec_mem_slow.opLat = 10
         vec_mem_slow.issueLat = 4
 
@@ -172,7 +178,7 @@ class RISCVFUPool(MinorFUPool):
         misc.issueLat = 1
 
         self.funcUnits = [
-            int_alu, int_mul, int_div, fp_fast_A, fp_fast_B,
+            int_alu, int_mul, int_div, fp_fast_a, fp_fast_b,
             fp_sqrt, fp_div, fp_cmp, mem_fu, simd_int_fast,
             simd_complex, simd_matrix, simd_div_sqrt, pred,
             vec_mem_fast, vec_mem_slow, misc,
@@ -247,7 +253,7 @@ class CacheHierarchy(PrivateL1CacheHierarchy):
     def incorporate_cache(self, board):
         super().incorporate_cache(board)
 
-        for i, core in enumerate(board.get_processor().get_cores()):
+        for i in range(len(board.get_processor().get_cores())):
             self.l1icaches[i].assoc = 4
             self.l1icaches[i].tag_latency = 1
             self.l1icaches[i].data_latency = 1
