@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""
-Run a gem5 RISC-V simulation and consolidate the metrics.
-Accepts both C (.c) and assembly (.S/.s/.asm) programs. The input type is
-detected from the extension and can be forced with --lang.
-"""
-import sys
-import os
-import shutil
-import hashlib
-import subprocess
-import re
-import argparse
+"""Run a gem5 RISC-V simulation and consolidate the metrics.
 
-# ==============================================================================
+Accepts both C (.c) and assembly (.S/.s/.asm/.sx) programs. The input type
+is detected from the extension and can be forced with --lang. Run it from
+the gem5 root:
+
+    python3 scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
+"""
+import argparse
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+# =============================================================================
 # GLOBAL CONFIGURATION
-# ==============================================================================
+# =============================================================================
 GEM5_ROOT = os.getcwd()
 
-# Where gem5 writes: stats.txt, the debug trace, the disassembly. This is
-# gem5's own default output folder.
+# Where gem5 writes: stats.txt, the debug trace, the disassembly. gem5's
+# m5out, moved under results/.
 GEM5_OUT_DIR = os.path.join("results", "m5out")
 
 # Where each run leaves a copy of the files worth keeping, under the root
@@ -49,30 +52,25 @@ GEM5_BINARY_NAMES = ("gem5.opt", "gem5.fast", "gem5.debug")
 # are told apart by nothing else once they are built.
 PATCH_MARKER = b"Axi2MemPort"
 
+
+def find_patch():
+    """The patch to hash, the copy under gem5_configs/config/ that a push
+    refreshes, or None outside an image. The image deletes the copy it
+    applied at the root, so that one is never there to read."""
+    candidate = os.path.join(GEM5_ROOT, "gem5_configs", "config",
+                             "MinorCPU_CVA6.patch")
+    return candidate if os.path.isfile(candidate) else None
+
+
 # The patch a run was built from. The image records the hash of the patch it
 # applied, so a table says which transcription produced it and an edited but
 # unrebuilt patch is caught before the numbers are believed.
-
-
-def find_patch():
-    """The patch to hash. configs/ is the copy a push refreshes, and the one
-    at the root is what the image applied, so the first is authoritative and
-    the second is the fallback for an image built before configs/ existed."""
-    for rel in (os.path.join("gem5_configs", "config",
-                             "MinorCPU_CVA6.patch"),
-                "MinorCPU_CVA6.patch"):
-        candidate = os.path.join(GEM5_ROOT, rel)
-        if os.path.isfile(candidate):
-            return candidate
-    return os.path.join(GEM5_ROOT, "MinorCPU_CVA6.patch")
-
-
 PATCH_FILE = find_patch()
 BUILT_PATCH_HASH = os.path.join(GEM5_ROOT, ".built_patch_sha1")
 M5_INCLUDE = os.path.join(GEM5_ROOT, "include")
 M5_OP_ASM = os.path.join(GEM5_ROOT, "util/m5/src/abi/riscv/m5op.S")
 
-# Compile flags common to both paths.
+# Freestanding, since a test calls only the m5 ops and has no C library.
 COMMON_CFLAGS = [
     "-static",
     "-mcmodel=medany",
@@ -97,35 +95,41 @@ METRICS_MARKER = "RESULTS TABLE"
 CODE_BANNER = [RULE, "DISASSEMBLED CODE", RULE]
 CODE_END_BANNER = [RULE, "END OF DISASSEMBLED CODE", RULE]
 
+# The debug flags behind every line MinorFlow_tracer.py reads: MinorLine and
+# MinorInst (MinorTrace), Execute, LSQ and scoreboard lines (Minor), Fetch1,
+# Fetch2 and the predictor (Fetch), Decode, the caches, commits and the RAS.
+DEBUG_FLAGS = ("Minor", "MinorTrace", "CacheAll", "ExecAll", "Fetch",
+               "Decode", "RAS")
+
 # Lines of each captured stream echoed when a step fails. The whole of both
 # goes to the log either way. This is only what the terminal is worth.
 ERROR_TAIL_LINES = 40
 
-# ==============================================================================
+# =============================================================================
 # OVERHEAD PROFILES
-# ==============================================================================
+# =============================================================================
 # Scaffolding around the measured region, subtracted to get NET. Indexed by
-# suite, build and language. 'config' is the set in benchmarks/gem5/, 'viewer'
-# the viewer's own set: different templates, so they are not interchangeable.
+# suite, variant and language. 'config' is the fork's calibration set and
+# 'viewer' this repository's, whose templates differ.
 OVERHEAD_SUITES = {
     "config": {
         "patch": {
             "c": {
-                "numCycles":        32,
+                "numCycles":        26,
                 "numInsts":         6,
-                "icache_miss":      3,
+                "icache_miss":      2,
                 "dcache_miss":      0,
-                "icache_access":    17,
+                "icache_access":    16,
                 "dcache_access":    0,
                 "branch_pred":      5,
                 "branch_miss":      1,
             },
             "asm": {
-                "numCycles":        32,
+                "numCycles":        26,
                 "numInsts":         6,
-                "icache_miss":      3,
+                "icache_miss":      2,
                 "dcache_miss":      0,
-                "icache_access":    17,
+                "icache_access":    16,
                 "dcache_access":    0,
                 "branch_pred":      5,
                 "branch_miss":      1,
@@ -133,7 +137,7 @@ OVERHEAD_SUITES = {
         },
         "stock": {
             "c": {
-                "numCycles":        40,
+                "numCycles":        45,
                 "numInsts":         6,
                 "icache_miss":      3,
                 "dcache_miss":      0,
@@ -143,7 +147,7 @@ OVERHEAD_SUITES = {
                 "branch_miss":      3,
             },
             "asm": {
-                "numCycles":        39,
+                "numCycles":        41,
                 "numInsts":         6,
                 "icache_miss":      3,
                 "dcache_miss":      0,
@@ -157,21 +161,21 @@ OVERHEAD_SUITES = {
     "viewer": {
         "patch": {
             "c": {
-                "numCycles":        26,
+                "numCycles":        21,
                 "numInsts":         5,
                 "icache_miss":      1,
                 "dcache_miss":      0,
-                "icache_access":    17,
+                "icache_access":    15,
                 "dcache_access":    0,
                 "branch_pred":      4,
                 "branch_miss":      1,
             },
             "asm": {
-                "numCycles":        26,
+                "numCycles":        25,
                 "numInsts":         5,
-                "icache_miss":      2,
+                "icache_miss":      1,
                 "dcache_miss":      0,
-                "icache_access":    14,
+                "icache_access":    15,
                 "dcache_access":    0,
                 "branch_pred":      4,
                 "branch_miss":      1,
@@ -183,28 +187,24 @@ OVERHEAD_SUITES = {
                 "numInsts":         5,
                 "icache_miss":      0,
                 "dcache_miss":      0,
-                "icache_access":    10,
+                "icache_access":    16,
                 "dcache_access":    0,
-                "branch_pred":      3,
+                "branch_pred":      5,
                 "branch_miss":      2,
             },
             "asm": {
-                "numCycles":        37,
+                "numCycles":        17,
                 "numInsts":         5,
-                "icache_miss":      1,
+                "icache_miss":      0,
                 "dcache_miss":      0,
-                "icache_access":    10,
+                "icache_access":    12,
                 "dcache_access":    0,
-                "branch_pred":      4,
-                "branch_miss":      2,
+                "branch_pred":      3,
+                "branch_miss":      1,
             },
         },
     },
 }
-
-# Profiles above that are a copy rather than their own measurement.
-# Profiles that do not match the build they are subtracted from, and why.
-UNCALIBRATED = {}
 
 
 def resolve_input(path):
@@ -221,7 +221,7 @@ def resolve_input(path):
     # configs/ and benchmarks/, then this script's own repository.
     for base in (os.curdir, repo, here):
         candidate = os.path.join(base, path)
-        if os.path.exists(candidate):
+        if base != os.curdir and os.path.exists(candidate):
             return candidate
         # Also the bare name inside the usual folders, so 'daxpy.S' finds
         # benchmarks/config/daxpy.S and a configuration its gem5_configs/
@@ -238,6 +238,11 @@ def resolve_input(path):
 # A one-line file in a benchmark directory naming the overhead suite its
 # programs belong to.
 SUITE_MARKER = ".overhead_suite"
+
+
+# SHARED BEGIN py-suite-marker
+
+# Needs: os, SUITE_MARKER, OVERHEAD_SUITES
 
 
 def read_suite_marker(src_file):
@@ -267,41 +272,26 @@ def read_suite_marker(src_file):
         d = parent
     return None
 
+# SHARED END py-suite-marker
 
-def default_suite(src_file=None):
-    """Which overhead table to subtract, decided by where the test came from.
 
-    The suite decides which fixed instrumentation overhead is subtracted from
-    every reported cycle count. The path heuristics below are the fallback
-    for a tree with no marker."""
+def default_suite(src_file):
+    """The suite the .overhead_suite beside the test names, or None after
+    saying why. The suite decides what is subtracted from every reported
+    cycle count, so it is never guessed from a path."""
     named = read_suite_marker(src_file)
-    if named:
-        return named
-    guess = None
-    if src_file:
-        parts = os.path.abspath(src_file).split(os.sep)
-        if "gem5_config_CVA6" in parts:
-            guess = "config"
-        elif "MinorFlow" in parts:
-            guess = "viewer"
-    if guess is None:
-        here = os.path.dirname(os.path.abspath(__file__))
-        for base in (here, os.path.dirname(here)):
-            if os.path.isfile(os.path.join(base, "MinorFlow.html")):
-                guess = "viewer"
-                break
-    if guess is None:
-        guess = "config"
-    print(f"[WARN] No {SUITE_MARKER} beside the test, so the overhead table "
-          f"was inferred as '{guess}' from the path. This decides what is "
-          f"subtracted from every cycle count: pass --suite to say which one, "
-          f"or drop a {SUITE_MARKER} file naming it beside the benchmarks.")
-    return guess
+    if named is None:
+        choices = " or --suite ".join(sorted(OVERHEAD_SUITES))
+        print(f"[ERROR] No {SUITE_MARKER} beside {src_file} or in the two "
+              f"folders above it, so the overhead table to subtract is "
+              f"unknown. Pass --suite {choices}, or add a {SUITE_MARKER} "
+              f"file naming one beside the benchmarks.", file=sys.stderr)
+    return named
 
 
-# ==============================================================================
+# =============================================================================
 # METRICS MAP
-# ==============================================================================
+# =============================================================================
 METRICS_MAP = {
     "numCycles":         r"cores\.core\.numCycles",
     "numInsts":          r"cores\.core\.commitStats0\.numInsts\s",
@@ -322,8 +312,7 @@ METRICS_MAP = {
     "bp_look_call_d":    r"branchPred\.btb\.lookups::CallDirect\b",
     "bp_look_call_i":    r"branchPred\.btb\.lookups::CallIndirect\b",
     "bp_look_return":    r"branchPred\.btb\.lookups::Return\b",
-    # mispredicted_0, the thread suffix gem5 writes. Without it these seven
-    # never matched and the sum below was always zero.
+    # mispredicted_0, the thread suffix gem5 writes.
     "bp_misp_d_cond":    r"branchPred\.mispredicted_0::DirectCond\b",
     "bp_misp_d_uncond":  r"branchPred\.mispredicted_0::DirectUncond\b",
     "bp_misp_i_cond":    r"branchPred\.mispredicted_0::IndirectCond\b",
@@ -340,12 +329,12 @@ METRICS_MAP = {
 PRETTY_NAMES = {
     "numCycles": "Cycles",
     "numInsts": "Instructions",
-    "icache_miss": "I-Cache Misses",
-    "dcache_miss": "D-Cache Misses",
-    "icache_access": "I-Cache Accesses",
-    "dcache_access": "D-Cache Accesses",
+    "icache_miss": "I-cache misses",
+    "dcache_miss": "D-cache misses",
+    "icache_access": "I-cache accesses",
+    "dcache_access": "D-cache accesses",
     "branch_pred": "Branches",
-    "branch_miss": "Branch Miss + Unpred",
+    "branch_miss": "Mispredicts + unpredicted",
     "simSeconds": "Time (us)",
     "ipc": "IPC",
 }
@@ -355,9 +344,22 @@ CVA6_EXTRA = {
     "dcache_access": ("dcache_preempt", "dcache_win_trig", "dcache_win_over"),
 }
 
+# The seven branch types gem5 keeps a counter for, as METRICS_MAP names them.
+BTB_LOOKUP_KEYS = ("bp_look_d_cond", "bp_look_d_uncond", "bp_look_i_cond",
+                   "bp_look_i_uncond", "bp_look_call_d", "bp_look_call_i",
+                   "bp_look_return")
+MISPREDICTED_KEYS = ("bp_misp_d_cond", "bp_misp_d_uncond", "bp_misp_i_cond",
+                     "bp_misp_i_uncond", "bp_misp_call_d", "bp_misp_call_i",
+                     "bp_misp_return")
+
+
+class RunFailed(Exception):
+    """A step failed and has already said why, so main exits with 1."""
+
 
 def format_cache_size(value):
-    """Render a cache size as KiB/MiB. Accepts a byte count or a gem5 string."""
+    """Render a cache size as KiB or MiB, from a byte count or a gem5
+    string such as 16KiB, which is returned as it is."""
     text = str(value).strip()
     if not text:
         return "?"
@@ -401,7 +403,8 @@ def read_cache_geometry(out_dir):
                 key = key.strip()
                 if not sep or key not in ("size", "assoc"):
                     continue
-                for tag, name in (("l1icache", "icache"), ("l1dcache", "dcache")):
+                for tag, name in (("l1icache", "icache"),
+                                  ("l1dcache", "dcache")):
                     if tag in section:
                         geometry.setdefault(name, {})[key] = value.strip()
     except OSError as e:
@@ -411,23 +414,24 @@ def read_cache_geometry(out_dir):
 
     for name in ("icache", "dcache"):
         if not geometry.get(name):
-            print(f"[WARN] No L1 {name[0]}-cache section in {config_path}. "
-                  f"Its geometry is reported as '?'")
+            print(f"[WARN] No L1 {name[0].upper()}-cache section in "
+                  f"{config_path}. Its geometry is reported as '?'")
     return geometry
 
 
-def build_table_header(engine, config, program, geometry, build=""):
-    """Title, configuration and build, one per line. The build line is what
-    makes a gathered metrics file say which binary produced it."""
-    parts = [f"RESULTS TABLE {engine} {program}"]
-    for name, label in (("icache", "ICache"), ("dcache", "DCache")):
+def build_table_header(engine, core, program, geometry, build=""):
+    """Title, core and build, one per line. For gem5 the core is the
+    configuration and its flags. The build line is what makes a gathered
+    metrics file say which binary produced it."""
+    parts = [f"{METRICS_MARKER} {engine} {program}"]
+    for name, label in (("icache", "I-cache"), ("dcache", "D-cache")):
         cache = geometry.get(name, {})
         size = format_cache_size(cache.get("size", ""))
         assoc = cache.get("assoc") or "?"
         parts.append(f"{label}: {size}/{assoc}")
-    lines = ["  ".join(parts), f"Config: {config}"]
+    lines = ["  ".join(parts), f"Config: {core}"]
     if build:
-        lines.append(f"Build:  {build}")
+        lines.append(f"Build: {build}")
     return lines
 
 
@@ -435,7 +439,7 @@ def detect_lang(src_file, override):
     """Decide whether the input is C or assembly."""
     if override in ("c", "asm"):
         return override
-    root, ext = os.path.splitext(src_file)
+    ext = os.path.splitext(src_file)[1]
     if ext == ".S":
         return "asm"
     low = ext.lower()
@@ -443,7 +447,6 @@ def detect_lang(src_file, override):
         return "c"
     if low in ASM_EXTS:
         return "asm"
-    # No clear hint: assume C and warn.
     print(f"[WARN] Unrecognised extension '{ext}'. Assuming C. "
           f"Use --lang c|asm to force.")
     return "c"
@@ -464,8 +467,9 @@ def report_failure(what, cmd, result, out_dir, program_name):
         print(f"[WARN] Could not write the failure log: {e}")
         log_path = None
 
-    print(f"[ERROR] {what} failed with exit code {result.returncode}")
-    print(f"[ERROR] Command: {' '.join(cmd)}")
+    print(f"[ERROR] {what} failed with exit code {result.returncode}",
+          file=sys.stderr)
+    print(f"[ERROR] Command: {' '.join(cmd)}", file=sys.stderr)
 
     for name in ("stderr", "stdout"):
         text = (getattr(result, name) or "").strip()
@@ -475,14 +479,14 @@ def report_failure(what, cmd, result, out_dir, program_name):
         shown = lines[-ERROR_TAIL_LINES:]
         if len(lines) > len(shown):
             print(f"[ERROR] --- last {len(shown)} of {len(lines)} {name} "
-                  f"lines ---")
+                  f"lines ---", file=sys.stderr)
         else:
-            print(f"[ERROR] --- {name} ---")
+            print(f"[ERROR] --- {name} ---", file=sys.stderr)
         for line in shown:
-            print(f"  {line}")
+            print(f"  {line}", file=sys.stderr)
 
     if log_path:
-        print(f"[ERROR] Full output: {log_path}")
+        print(f"[ERROR] Full output: {log_path}", file=sys.stderr)
 
 
 def compile_program(src_file, lang, out_dir):
@@ -500,20 +504,24 @@ def compile_program(src_file, lang, out_dir):
         cflags += C_EXTRA_CFLAGS
     cflags.append(f"-I{M5_INCLUDE}")
 
-    # Both C and asm link m5op.S to resolve the m5_* ops.
     sources = [src_file, M5_OP_ASM]
     cmd = [GCC_CMD] + sources + cflags + ["-o", bin_file]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            report_failure("Compilation", cmd, result, out_dir, base_name)
-            sys.exit(1)
     except FileNotFoundError:
-        print(f"[ERROR] Compiler not found: {GCC_CMD}")
-        sys.exit(1)
+        print(f"[ERROR] Compiler not found: {GCC_CMD}", file=sys.stderr)
+        raise RunFailed()
+    if result.returncode != 0:
+        report_failure("Compilation", cmd, result, out_dir, base_name)
+        raise RunFailed()
 
     return bin_file
+
+
+# SHARED BEGIN py-split-own-args
+
+# Needs: none
 
 
 def split_own_args(argv):
@@ -525,13 +533,14 @@ def split_own_args(argv):
         return argv[:cut], argv[cut + 1:]
     return argv, []
 
+# SHARED END py-split-own-args
+
 
 def resolve_gem5_bin(spec):
     """Find the binary a --build value names, or None.
 
     Accepts a build directory name (RISCV), a path to one (build/RISCV) or a
-    path to the binary itself, so any build in the tree can be run.
-    """
+    path to the binary itself, so any build in the tree can be run."""
     if os.path.isfile(spec):
         return spec
     for directory in (spec, os.path.join("build", spec)):
@@ -543,7 +552,8 @@ def resolve_gem5_bin(spec):
 
 
 def build_is_patched(path):
-    """Whether this gem5 binary carries the patch, or None if it cannot be read."""
+    """Whether this gem5 binary carries the patch, or None if it cannot be
+    read."""
     overlap = len(PATCH_MARKER) - 1
     try:
         with open(path, "rb") as handle:
@@ -565,21 +575,28 @@ def patch_fingerprint():
     'built' is what the image recorded when it applied the patch, 'current' is
     the file sitting there now."""
     def read_hash(path, hasher):
+        """hasher applied to the open file, or None when it cannot be read."""
         try:
             with open(path, "rb") as handle:
                 return hasher(handle)
         except OSError:
             return None
 
+    # An empty marker holds no hash rather than failing a finished run.
     built = read_hash(BUILT_PATCH_HASH,
-                      lambda h: h.read().decode().split()[0][:12] or None)
-    current = read_hash(PATCH_FILE,
-                        lambda h: hashlib.sha1(h.read()).hexdigest()[:12])
+                      lambda h: (h.read().decode().split() or [""])[0][:12]
+                      or None)
+    current = None
+    if PATCH_FILE is not None:
+        current = read_hash(PATCH_FILE,
+                            lambda h: hashlib.sha1(h.read()).hexdigest()[:12])
     return built, current
 
 
 def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
              gem5_bin, config_args=()):
+    """Run gem5 on the binary, with the debug trace unless no_trace, and
+    return the path of the stats.txt it writes."""
     os.makedirs(out_dir, exist_ok=True)
 
     stats_path = os.path.join(out_dir, "stats.txt")
@@ -590,25 +607,22 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
     # there rather than as a TypeError out of subprocess.
     cmd = [gem5_bin]
 
-    # Unless '--no-trace' is set, add the requested debug flags.
+    # The trace is the expensive part, which is what --no-trace skips.
     if not no_trace:
         trace_file = f"{program_name}_trace.txt"
         print(f"[INFO] Enabling detailed debug traces in: "
               f"{os.path.join(out_dir, trace_file)}")
         cmd.extend([
-            # RAS is stock but off by default. It carries the stack depth and,
-            # on a patched build, the drop the no-recovery model takes instead
-            # of repairing the stack on a squash.
-            "--debug-flags=Minor,MinorTrace,MinorTiming,CacheAll,ExecAll,"
-            "Fetch,Decode,IEW,Commit,LSQ,Scoreboard,Writeback,RAS",
+            # Every family MinorFlow_tracer.py reads, and nothing else, since
+            # the trace runs to gigabytes. RAS is stock but off by default.
+            "--debug-flags=" + ",".join(DEBUG_FLAGS),
             f"--debug-file={trace_file}",
         ])
 
     cmd.extend(["-d", out_dir, config_file, bin_file])
 
     # gem5 hands everything after the script's path to the script, so a
-    # configuration's own flags, such as the lab configuration's
-    # --port-model, ride along here untouched.
+    # configuration's own flags ride along here untouched.
     cmd.extend(config_args)
 
     print(f"[INFO] Running gem5 simulation using '{config_file}'")
@@ -618,11 +632,14 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         report_failure("gem5", cmd, result, out_dir, program_name)
-        sys.exit(1)
+        raise RunFailed()
     return stats_path
 
 
-def generate_and_show_codelist(bin_file, program_name, out_dir):
+def generate_codelist(bin_file, program_name, out_dir):
+    """Disassemble the binary into <program>.list, and start the
+    _report.txt with the listing up to the call to m5_dump_stats, the
+    measured region. Returns the _report.txt path, or None."""
     os.makedirs(out_dir, exist_ok=True)
     list_file = os.path.join(out_dir, f"{program_name}.list")
     report_file = os.path.join(out_dir, f"{program_name}_report.txt")
@@ -634,9 +651,13 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
     try:
         with open(list_file, "w") as f:
             subprocess.run(cmd, stdout=f, check=True)
+    except FileNotFoundError:
+        print(f"[ERROR] Disassembler not found: {OBJDUMP_CMD}",
+              file=sys.stderr)
+        raise RunFailed()
     except subprocess.CalledProcessError as e:
-        print("[ERROR]", e)
-        sys.exit(1)
+        print(f"[ERROR] {e}", file=sys.stderr)
+        raise RunFailed()
 
     written = 0
     found_end = False
@@ -667,8 +688,8 @@ def generate_and_show_codelist(bin_file, program_name, out_dir):
 
 
 def collect_results(program_name, out_dir, results_dir):
-    """Copy the four files worth keeping into results/run/. The trace is what
-    the viewer renders, the .list the disassembly, the _report.txt the measured
+    """Copy the four files worth keeping into results/run/. The trace is the
+    tracer's input, the .list the disassembly, the _report.txt the measured
     region plus the metrics table, and the stats gem5's own numbers."""
     try:
         os.makedirs(results_dir, exist_ok=True)
@@ -698,6 +719,8 @@ def collect_results(program_name, out_dir, results_dir):
 
 
 def parse_stats(stats_path):
+    """The METRICS_MAP values from the first statistics block of stats.txt,
+    with the branch sums the table shows."""
     print("[INFO] Extracting statistics")
     results = {key: 0.0 for key in METRICS_MAP}
     # None rather than zero: a stock build never writes these, and gem5 omits
@@ -727,38 +750,29 @@ def parse_stats(stats_path):
                                 except ValueError:
                                     pass
     except FileNotFoundError:
-        print("[ERROR] stats.txt not found")
-        sys.exit(1)
+        print("[ERROR] stats.txt not found", file=sys.stderr)
+        raise RunFailed()
 
-    # Total branches = all SEVEN BTB-lookup buckets
-    results["branch_pred"] = (results.get("bp_look_d_cond", 0) +
-                              results.get("bp_look_d_uncond", 0) +
-                              results.get("bp_look_i_cond", 0) +
-                              results.get("bp_look_i_uncond", 0) +
-                              results.get("bp_look_call_d", 0) +
-                              results.get("bp_look_call_i", 0) +
-                              results.get("bp_look_return", 0))
+    # Branches: the seven BTB-lookup buckets summed. The viewer's Branches
+    # count sits at or below this, since Fetch2 also predicts wrong-path
+    # instructions discarded before Execute, which never become records.
+    results["branch_pred"] = sum(results[key] for key in BTB_LOOKUP_KEYS)
 
-    # Mispred + Unpred = sum of branchPred.mispredicted_0::* over the seven
-    # types.
-    misp_by_type = (results.get("bp_misp_d_cond", 0) +
-                    results.get("bp_misp_d_uncond", 0) +
-                    results.get("bp_misp_i_cond", 0) +
-                    results.get("bp_misp_i_uncond", 0) +
-                    results.get("bp_misp_call_d", 0) +
-                    results.get("bp_misp_call_i", 0) +
-                    results.get("bp_misp_return", 0))
-    results["branch_miss"] = misp_by_type
+    # Mispredicted plus unpredicted, over the same seven types.
+    results["branch_miss"] = sum(results[key] for key in MISPREDICTED_KEYS)
 
     return results
 
 
 def print_table(results, overhead, report_file=None,
-                header=("RESULTS TABLE",), show_cva6=False):
+                header=(METRICS_MARKER,), show_cva6=False):
+    """Print the OFFICIAL and NET table, with the NET (CVA6) column when
+    show_cva6, and append it to the _report.txt."""
     output_buffer = []
 
     # The rule is widened when the title is longer, so the box never breaks.
-    # A third column needs 18 more, which is the minimum the rule can be.
+    # The column header row is 61 characters with two value columns and 79
+    # with three, so the floors of 70 and 79 always hold it.
     width = max(79 if show_cva6 else 70, max(len(line) for line in header))
 
     output_buffer.append("\n" + "=" * width)
@@ -778,15 +792,14 @@ def print_table(results, overhead, report_file=None,
     clean_array_corrected = []
     clean_array_cva6 = []
 
-    # Pre-compute the corrected IPC (with overhead removed).
     raw_insts = results.get("numInsts", 0)
     net_insts = max(0, raw_insts - overhead.get("numInsts", 0))
 
-    raw_cycles = results.get("numCycles", 1)
-    net_cycles = max(
-        1, raw_cycles - overhead.get("numCycles", 0))  # avoid div/0
-
-    corrected_ipc = net_insts / net_cycles if net_cycles > 0 else 0
+    raw_cycles = results["numCycles"]
+    # At least one cycle, so an overhead as large as the run cannot divide
+    # by zero.
+    net_cycles = max(1, raw_cycles - overhead.get("numCycles", 0))
+    corrected_ipc = net_insts / net_cycles
 
     # stats.txt rounds simSeconds to six decimals, which at these runtimes
     # cuts the time off at the whole microsecond. simTicks keeps the full
@@ -868,11 +881,13 @@ def print_table(results, overhead, report_file=None,
                     f_report.write(line + "\n")
             print(
                 f"[INFO] Metrics successfully consolidated in: {report_file}")
-        except Exception as e:
+        except OSError as e:
             print(f"[WARN] Could not save the metrics to the file: {e}")
 
 
-if __name__ == "__main__":
+def main():
+    """Parse the command line, run the four steps and print the table.
+    Returns the exit code."""
     parser = argparse.ArgumentParser(
         description="Run a gem5 RISC-V simulation (C or assembly) and "
                     "consolidate reports.",
@@ -880,27 +895,30 @@ if __name__ == "__main__":
         epilog="Any flag this script does not define is passed on to the "
                "configuration,\nso a configuration's own options work here:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_patch.py daxpy.S "
-               "--no-port-model --no-fill-phase\n"
+               "  run_gem5.py my_config.py daxpy.S --some-config-flag\n"
                "\n"
                "Put them after a '--' when a flag takes a value or shares a "
                "name with\none of ours:\n"
                "\n"
-               "  run_gem5.py gem5_config_CVA6_patch.py daxpy.S -- "
-               "--no-port-model")
+               "  run_gem5.py my_config.py daxpy.S -- --some-config-flag 4")
     parser.add_argument("config_file",
                         help="Path to the gem5 configuration file (.py)")
     parser.add_argument("src_file",
-                        help="Path to the program: C (.c) or assembly (.S/.s/.asm)")
-    parser.add_argument("--lang", choices=["c", "asm"], default="auto",
-                        help="Force the input type and overhead profile. "
-                             "Defaults to detection by extension.")
+                        help="Path to the program: C (.c) or assembly "
+                             "(.S/.s/.asm/.sx)")
+    parser.add_argument("--lang", choices=["auto", "c", "asm"],
+                        default="auto",
+                        help="Force the input type, which selects both the "
+                             "compile flags and the overhead profile. "
+                             "Defaults to auto, detection by extension")
     parser.add_argument("--suite", choices=sorted(OVERHEAD_SUITES),
                         default=None,
                         help="Which overhead table to subtract. 'config' is "
-                             "the calibration benchmarks, 'viewer' the "
-                             "MinorFlow development set. Defaults to "
-                             "the folder the test came from")
+                             "the fork's calibration benchmarks, 'viewer' "
+                             "the programs written while developing "
+                             "MinorFlow. Defaults to the .overhead_suite "
+                             "marker beside the test or in the two folders "
+                             "above it, and the run stops without one")
     parser.add_argument("--variant", choices=sorted(GEM5_BUILDS),
                         default=DEFAULT_VARIANT,
                         help=f"Which build to run and whose overhead profile "
@@ -918,7 +936,7 @@ if __name__ == "__main__":
                              "patch. The overhead profile still follows "
                              "--variant")
     parser.add_argument("--no-trace", action="store_true",
-                        help="Disable collection of detailed debug traces.")
+                        help="Do not write the trace, and report metrics only")
     parser.add_argument("--gem5-out-dir", default=GEM5_OUT_DIR,
                         help=f"Where gem5 writes, and where the test is "
                              f"compiled. Defaults to {GEM5_OUT_DIR}/. Give "
@@ -927,7 +945,7 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", default=RESULTS_DIR,
                         help="Where the four files worth keeping are "
                              "copied. Defaults to results/run/ under the "
-                             "script")
+                             "current directory, the gem5 root")
 
     own_argv, after_separator = split_own_args(sys.argv[1:])
     args, unrecognised = parser.parse_known_args(own_argv)
@@ -938,19 +956,20 @@ if __name__ == "__main__":
     # in its own repository, which is not where the gem5 root is.
     config_file = resolve_input(args.config_file)
     src_file = resolve_input(args.src_file)
-    args.config_file, args.src_file = config_file, src_file
 
-    # Resolved here rather than as an argparse default: it
-    # reads the test's path, which is not known until now.
+    # Resolved here rather than as an argparse default: it reads the test's
+    # path, which is not known until now.
+    if not os.path.exists(config_file):
+        print(f"[ERROR] Configuration not found: {config_file}",
+              file=sys.stderr)
+        return 1
+    if not os.path.exists(src_file):
+        print(f"[ERROR] Test not found: {src_file}", file=sys.stderr)
+        return 1
     if args.suite is None:
         args.suite = default_suite(src_file)
-
-    if not os.path.exists(config_file):
-        print(f"[ERROR] The configuration file '{config_file}' does not exist")
-        sys.exit(1)
-    if not os.path.exists(src_file):
-        print(f"[ERROR] The program file '{src_file}' does not exist")
-        sys.exit(1)
+        if args.suite is None:
+            return 1
 
     lang = detect_lang(src_file, args.lang)
     overhead = OVERHEAD_SUITES[args.suite][args.variant][lang]
@@ -961,8 +980,8 @@ if __name__ == "__main__":
     if gem5_bin is None:
         print(f"[ERROR] No gem5 binary found for '{build_spec}'. Looked for "
               f"{', '.join(GEM5_BINARY_NAMES)} in '{build_spec}' and in "
-              f"'{os.path.join('build', build_spec)}'.")
-        sys.exit(1)
+              f"'{os.path.join('build', build_spec)}'.", file=sys.stderr)
+        return 1
     if args.build:
         print(f"[INFO] Build: {gem5_bin} (overhead profile: {args.variant})")
     else:
@@ -984,24 +1003,30 @@ if __name__ == "__main__":
                   f"was given, so the NET figures do not apply to this build.")
         else:
             print(f"[ERROR] {message}. Pick the other --variant, point "
-                  f"--build at the right build, or pass --skip-build-check.")
-            sys.exit(1)
-    reason = UNCALIBRATED.get((args.suite, args.variant))
-    if reason:
-        print(f"[WARN] The {args.suite}/{args.variant} overhead profile is "
-              f"{reason}. The OFFICIAL figures are correct, the NET ones are "
-              f"not calibrated for this pairing.")
+                  f"--build at the right build, or pass --skip-build-check.",
+                  file=sys.stderr)
+            return 1
 
     program_name = os.path.splitext(os.path.basename(src_file))[0]
+    # A plain run leaves its binary in results/m5out/ under the test's name,
+    # where a batch could otherwise ask for a folder of the same name.
+    for folder in (args.gem5_out_dir, args.results_dir):
+        if os.path.exists(folder) and not os.path.isdir(folder):
+            print(f"[ERROR] '{folder}' is a file, not a folder. Move it, or "
+                  f"pass another --gem5-out-dir or --results-dir.",
+                  file=sys.stderr)
+            return 1
 
-    binary = compile_program(src_file, lang, args.gem5_out_dir)
-    stats_file = run_gem5(config_file, binary, args.no_trace, program_name,
-                          args.gem5_out_dir, gem5_bin, config_args)
-
-    report_file = generate_and_show_codelist(binary, program_name,
-                                             args.gem5_out_dir)
-
-    metrics = parse_stats(stats_file)
+    try:
+        binary = compile_program(src_file, lang, args.gem5_out_dir)
+        stats_file = run_gem5(config_file, binary, args.no_trace,
+                              program_name, args.gem5_out_dir, gem5_bin,
+                              config_args)
+        report_file = generate_codelist(binary, program_name,
+                                        args.gem5_out_dir)
+        metrics = parse_stats(stats_file)
+    except RunFailed:
+        return 1
     geometry = read_cache_geometry(args.gem5_out_dir)
     # The flags ride along: they are what separates one run of a configuration
     # from another, so a table without them cannot be told apart.
@@ -1027,3 +1052,8 @@ if __name__ == "__main__":
 
     # Done last, so the _report.txt copied out already carries the table.
     collect_results(program_name, args.gem5_out_dir, args.results_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
