@@ -1,25 +1,27 @@
 # tests/
 
-Trace JSONs, and the sample the viewer loads on its own.
+Tracer JSONs, and the sample JSONs the viewer's Load sample button offers.
 
-Nothing here is tracked. gem5 debug traces run to gigabytes and their JSONs to hundreds of megabytes, so this directory is generated rather than committed, and a fresh clone finds only this file. That is deliberate, and it is why the README links to `tests/` resolve.
+Only this file is committed, and it is kept so the folder exists in a fresh clone. gem5 debug traces run to gigabytes and their JSONs to hundreds of megabytes, so everything else here is generated, samples included.
 
 ## What lands here
 
-| File                                     | Made by                                                                                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `<name>_trace.txt`                       | `scripts/run_gem5.py`, copied from `run_results/`                                                                                    |
-| `<name>.json`                            | `MinorFlow_tracer.py`, or `scripts/create_all_MinorFlow_jsons.py` over a folder of traces                                            |
-| `daxpy.config1.json`, `daxpy.config1.js` | `scripts/make_MinorFlow_sample.py`. This pair is the sample `MinorFlow.html` loads when opened with no file, under exactly this name |
-| `oversized*.json`                        | `scripts/make_MinorFlow_oversized.py`, for testing the viewer's record ceiling                                                       |
+| File                                                   | Made by                                                                                                                                                                                        |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<name>_trace.txt`                                     | `scripts/run_gem5.py`, which leaves it in `results/run/` under the gem5 root, copied here by hand                                                                                              |
+| `<name>.json`                                          | `MinorFlow_tracer.py`, or `scripts/create_all_MinorFlow_jsons.py` over a folder of traces                                                                                                      |
+| `<name>.sample.js`, `<name>.sample.json`, `samples.js` | `scripts/make_MinorFlow_sample.py`. The page reads the manifest `samples.js`, served or opened from disk, and offers every sample it lists that its own tracer wrote at its own schema version |
+| `oversized*.json`                                      | `scripts/make_MinorFlow_oversized.py -o tests/oversized.json`, for testing the viewer's byte and record limits. Without `-o` it writes to the working directory                                |
 
 ## Filling it
 
 ```bash
 cd /path/to/gem5
 python3 /path/to/MinorFlow/scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
+cp results/run/daxpy_trace.txt /path/to/MinorFlow/tests/
+cd /path/to/MinorFlow
 python3 MinorFlow_tracer.py tests/daxpy_trace.txt -o tests/daxpy.json
-python3 scripts/make_MinorFlow_sample.py tests/daxpy.json -o tests/daxpy.config1
+python3 scripts/make_MinorFlow_sample.py tests/daxpy.json
 ```
 
-Add `--strict` to the tracer in a batch run: it exits non-zero when a debug-flag line family is missing from the capture, and `metadata.degraded` in the JSON says which.
+Add `--strict` to the tracer in a batch run: it exits with 3 when a debug-flag line family is missing from the capture, or the trace holds no instruction or no commit, and `metadata.degraded` in the JSON says which.
