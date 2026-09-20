@@ -121,7 +121,7 @@ FORMATTED_WITH = {"autopep8": "2.3.2", "pycodestyle": "2.14.0",
 
 
 def toolchain():
-    """The machine's Python, autopep8 and pycodestyle versions, asked of
+    """This machine's Python, autopep8 and pycodestyle versions, asked of
     autopep8 once, or None when autopep8 does not run."""
     done = subprocess.run([sys.executable, "-m", "autopep8", "--version"],
                           capture_output=True, text=True)
@@ -136,7 +136,7 @@ def toolchain():
 
 
 def toolchain_drift(have):
-    """How the machine differs from FORMATTED_WITH, as 'name have, not want'
+    """How this machine differs from FORMATTED_WITH, as 'name have, not want'
     pieces, or an empty list when it formats the way the tree was formatted."""
     return [f"{name} {have.get(name, 'missing')}, not {want}"
             for name, want in FORMATTED_WITH.items()
