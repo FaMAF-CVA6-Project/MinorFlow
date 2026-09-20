@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64" role="img" aria-label="MinorFlow">
+<title>MinorFlow</title>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="14" fill="#18181a" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>
+  <rect x="8" y="15.8" width="5" height="2.4" rx="1.2" fill="#7a8aa6"/>
+  <rect x="14.5" y="15.8" width="4.9" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="21.4" y="13.5" width="4.2" height="7" rx="1" fill="#6cbbe4"/>
+  <rect x="26.4" y="13.5" width="4.2" height="7" rx="1" fill="#2f7fb5"/>
+  <rect x="31.4" y="13.5" width="4.2" height="7" rx="1" fill="#7b4fc4"/>
+  <rect x="36.4" y="13.5" width="4.2" height="7" rx="1" fill="#3ecf9a"/>
+  <rect x="8" y="25.8" width="5" height="2.4" rx="1.2" fill="#7a8aa6"/>
+  <rect x="14.5" y="25.8" width="8" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="26.4" y="23.5" width="4.2" height="7" rx="1" fill="#6cbbe4"/>
+  <rect x="31.4" y="23.5" width="4.2" height="7" rx="1" fill="#2f7fb5"/>
+  <rect x="36.4" y="23.5" width="4.2" height="7" rx="1" fill="#7b4fc4"/>
+  <rect x="41.4" y="23.5" width="4.2" height="7" rx="1" fill="#3ecf9a"/>
+  <rect x="8" y="35.8" width="5" height="2.4" rx="1.2" fill="#7a8aa6"/>
+  <rect x="14.5" y="35.8" width="6" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="22" y="35.8" width="7.4" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="31.4" y="33.5" width="4.2" height="7" rx="1" fill="#6cbbe4"/>
+  <rect x="36.4" y="33.5" width="4.2" height="7" rx="1" fill="#2f7fb5"/>
+  <rect x="41.4" y="33.5" width="4.2" height="7" rx="1" fill="#7b4fc4"/>
+  <rect x="46.4" y="33.5" width="4.2" height="7" rx="1" fill="#3ecf9a"/>
+  <rect x="8" y="45.8" width="5" height="2.4" rx="1.2" fill="#7a8aa6"/>
+  <rect x="14.5" y="45.8" width="9" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="25" y="45.8" width="4" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="30.5" y="45.8" width="3.9" height="2.4" rx="1.2" fill="#62625d"/>
+  <rect x="36.4" y="43.5" width="4.2" height="7" rx="1" fill="#6cbbe4"/>
+  <rect x="41.4" y="43.5" width="4.2" height="7" rx="1" fill="#2f7fb5"/>
+  <rect x="46.4" y="43.5" width="4.2" height="7" rx="1" fill="#7b4fc4"/>
+  <rect x="51.4" y="43.5" width="4.2" height="7" rx="1" fill="#3ecf9a"/>
+  <line x1="42.5" y1="25" x2="46.17" y2="31.45" stroke="#18181a" stroke-width="3.7" stroke-linecap="round"/>
+  <polygon points="48.25,35.1 44.16,32.59 48.18,30.31" fill="#18181a" stroke="#18181a" stroke-width="2" stroke-linejoin="round"/>
+  <line x1="42.5" y1="25" x2="46.17" y2="31.45" stroke="#ffc864" stroke-width="1.7" stroke-linecap="round"/>
+  <polygon points="48.25,35.1 44.16,32.59 48.18,30.31" fill="#ffc864"/>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" role="img" aria-label="MinorFlow">
+<title>MinorFlow</title>
+  <rect x="0.25" y="0.25" width="15.5" height="15.5" rx="3.6" fill="#18181a" stroke="rgba(255,255,255,0.12)" stroke-width="0.5"/>
+  <rect x="1.5" y="4.5" width="3.5" height="1" fill="#6a6a66"/>
+  <rect x="5.5" y="4" width="1.5" height="2" fill="#6cbbe4"/>
+  <rect x="7" y="4" width="1.5" height="2" fill="#2f7fb5"/>
+  <rect x="8.5" y="4" width="1.5" height="2" fill="#7b4fc4"/>
+  <rect x="10" y="4" width="1.5" height="2" fill="#3ecf9a"/>
+  <rect x="1.5" y="7.5" width="5" height="1" fill="#6a6a66"/>
+  <rect x="7" y="7" width="1.5" height="2" fill="#6cbbe4"/>
+  <rect x="8.5" y="7" width="1.5" height="2" fill="#2f7fb5"/>
+  <rect x="10" y="7" width="1.5" height="2" fill="#7b4fc4"/>
+  <rect x="11.5" y="7" width="1.5" height="2" fill="#3ecf9a"/>
+  <rect x="1.5" y="10.5" width="6.5" height="1" fill="#6a6a66"/>
+  <rect x="8.5" y="10" width="1.5" height="2" fill="#6cbbe4"/>
+  <rect x="10" y="10" width="1.5" height="2" fill="#2f7fb5"/>
+  <rect x="11.5" y="10" width="1.5" height="2" fill="#7b4fc4"/>
+  <rect x="13" y="10" width="1.5" height="2" fill="#3ecf9a"/>
+</svg>
