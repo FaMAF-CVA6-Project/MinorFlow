@@ -7,9 +7,14 @@ __pycache__
 docs/CARLA2026/daxpy_validation/daxpy_trace.txt
 docs/CARLA2026/MinorFlow_Final_Submission.zip
 
-# Generated tracer JSONs, traces and samples. Only the README is committed.
-tests/*
-!tests/README.md
+# Testing: Traces and listings are never committed
+*_trace.txt
+*_trace.*.txt
+*.list
+
+# A tracer JSON in tests/ is what a sample is made from, not content: the
+# samples themselves, the .sample.js files and samples.js, are committed.
+tests/*.json
 
 # make_MinorFlow_oversized.py output, with the side files of a write it
 # did not finish
