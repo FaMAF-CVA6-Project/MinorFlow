@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Run the MinorFlow configuration sweep. Each TEST entry runs against the
 workloads it names, outputs carry a .config<N> tag, and every metrics table is
-gathered into one metrics.txt. Run it from the gem5 root.
+gathered into one metrics_<config>_<variant>.txt. Run it from the gem5 root:
+
+    python3 scripts/run_MinorFlow_sweep.py --configs 1,4-6 --dry-run
 """
 import argparse
 import concurrent.futures
 import glob
+import importlib.util
 import os
 import re
 import shutil
@@ -15,9 +18,9 @@ import tempfile
 import threading
 import time
 
-# ==============================================================================
+# =============================================================================
 # CONFIGURATION
-# ==============================================================================
+# =============================================================================
 DEFAULT_CONFIG = "gem5_config_MinorFlow.py"
 # A container or gem5 root keeps both suites under benchmarks/, while this
 # repository keeps its own set flat in benchmarks/. That one is tried last,
@@ -35,19 +38,12 @@ GEM5_BINARY_NAMES = ("gem5.opt", "gem5.fast", "gem5.debug")
 # Where run_gem5.py has gem5 write, cleared after each collected run.
 GEM5_OUT_DIR = os.path.join("results", "m5out")
 
-# Runs to keep in flight at once. Deliberately below the core count:
-# each holds a gem5 process and writes a trace, so memory and disk
-# bind before cores do.
+# Runs to keep in flight at once, capped at 4: each holds a gem5 process and
+# writes a trace, so memory and disk bind before cores do.
 DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 
 # How a collected file and a config copy are labelled.
 LABEL = "config"
-SELECTOR_NAME = "TEST"
-UNIT = "configuration"
-
-# Workloads to use for 'all' when the table names none at all. Empty here
-# because the MinorFlow table annotates every entry.
-DEFAULT_ALL_TESTS = []
 
 # Extensions tried when turning a workload name into a file, in this order.
 EXT_PRIORITY = [".c", ".S", ".s", ".asm", ".sx"]
@@ -55,7 +51,7 @@ EXT_PRIORITY = [".c", ".S", ".s", ".asm", ".sx"]
 # These ids are authoritative: the comment table only annotates them.
 ENTRY_RE = re.compile(r'^\s*(\d+):\s*\(\s*"([^"]*)"', re.M)
 
-# '#   4   fetch1LineWidth and snap 4 -> 16    workload: icache_pressure'
+# '#   4   fetch1LineWidth and snap 4 -> 16    workload: icache_hit_loop'
 ROW_RE = re.compile(r'^#\s+(\d+)\s+(\S.*)$')
 CONTINUATION_RE = re.compile(r'^#\s{4,}(\S.*)$')
 
@@ -69,11 +65,47 @@ SEP = "=" * 70
 METRICS_MARKER = "RESULTS TABLE"
 
 
+# SHARED BEGIN py-run-helpers
+
+# Needs: os, re, METRICS_MARKER, SEP
+
+
 def slug(text, limit=40):
-    """Turn a value into something safe for a file name: word characters and
-    single dashes, trimmed."""
+    """Turn a value into something safe for a file name: ASCII letters and
+    digits kept, each run of anything else one dash, trimmed of dashes at both
+    ends and cut to limit characters."""
     out = re.sub(r"[^A-Za-z0-9]+", "-", str(text)).strip("-")
     return out[:limit].strip("-")
+
+
+def format_duration(seconds):
+    # Rounded to the one decimal it prints, before the split, so 59.99 reads
+    # 1m00s and never 60.0s.
+    seconds = round(seconds, 1)
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{seconds:.1f}s"
+
+
+def extract_metrics(report_path):
+    """The metrics section of a _report.txt, or None if it holds none. The
+    file is the measured disassembly then the metrics table, so everything from
+    the rule above the table's title to the end is what is wanted."""
+    try:
+        with open(report_path) as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        print(f"[WARN] Could not read {report_path}: {e}")
+        return None
+
+    for i, line in enumerate(lines):
+        if line.startswith(METRICS_MARKER):
+            # Take the rule above the title too, so the block arrives boxed.
+            start = i - 1 if i and set(lines[i - 1]) == {"="} else i
+            return "\n".join(lines[start:]).rstrip()
+
+    return None
 
 
 def metrics_filename(parts):
@@ -82,40 +114,68 @@ def metrics_filename(parts):
     return "metrics" + ("_" if tags else "") + "_".join(tags) + ".txt"
 
 
-def find_beside_script(name, what, extra=()):
-    """Locate a file next to this script, then in the cwd, then anywhere in
-    extra."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [os.path.join(here, name), os.path.abspath(name)]
-    candidates += [os.path.join(here, p, name) for p in extra]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return os.path.abspath(candidate)
-    # Beside the script and the working directory are often one folder, so
-    # each place is named once.
-    places = dict.fromkeys(os.path.relpath(os.path.dirname(c))
-                           for c in candidates)
-    print(f"[ERROR] {what} ({name}) not found. Looked in: "
-          + ", ".join(places))
-    sys.exit(2)
+def write_metrics_file(out_dir, entries, info, filename):
+    """Gather every run's metrics table into one file, named filename.
+    entries is [(label, report file)] in the order of the summary, so the
+    file reads like it. A run with no table is named, not skipped."""
+    blocks, missing = [], []
+    for label, report_path in entries:
+        block = extract_metrics(report_path)
+        if block is None:
+            missing.append(label)
+            continue
+        blocks.append(f">>> {label}\n{block}")
+
+    if missing:
+        print(f"[WARN] No metrics table for: {', '.join(missing)}")
+    if not blocks:
+        print(f"[WARN] No metrics tables found, so no {filename} written")
+        return None
+
+    path = os.path.join(out_dir, filename)
+    try:
+        with open(path, "w") as f:
+            f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
+            for line in info:
+                f.write(line + "\n")
+            f.write(f"{SEP}\n\n")
+            f.write("\n\n".join(blocks) + "\n")
+    except OSError as e:
+        print(f"[WARN] Could not write {path}: {e}")
+        return None
+
+    print(f"[INFO] {len(blocks)} metrics table(s) gathered in {path}")
+    return path
+
+# SHARED END py-run-helpers
 
 
-def find_tests_dir(given):
-    """The folder holding the workloads.
+# SHARED BEGIN py-gem5-run-dirs
 
-    An explicit --tests-dir wins and is returned as given, so a wrong one
-    still produces the error naming it"""
-    if given:
-        return given
-    here = os.path.dirname(os.path.abspath(__file__))
-    for root in (os.getcwd(), os.path.dirname(here), here):
-        for name in DEFAULT_TESTS_DIRS:
-            candidate = os.path.join(root, name)
-            if os.path.isdir(candidate):
-                return candidate
-    # Nothing found. Return the first name so the existing error message
-    # names something concrete rather than an empty string.
-    return DEFAULT_TESTS_DIRS[0]
+# Needs: glob, importlib.util, os, shutil, DEFAULT_TESTS_DIRS,
+# GEM5_BINARY_NAMES, GEM5_OUT_DIR
+
+
+def load_runner(path):
+    """run_gem5.py as a module, so its tables decide what --suite and
+    --variant accept and its resolve_input what a name means here."""
+    spec = importlib.util.spec_from_file_location("run_gem5", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def find_tests_dir(given, resolve_input):
+    """The folder holding the tests: the one given, else the first of
+    DEFAULT_TESTS_DIRS that resolves to a folder, else the first name, so
+    the error names something concrete."""
+    names = (given,) if given else DEFAULT_TESTS_DIRS
+    for name in names:
+        # Without the trailing slash, so the fallback matches it by name.
+        folder = resolve_input(name.rstrip(os.sep) or name)
+        if os.path.isdir(folder):
+            return os.path.abspath(folder)
+    return os.path.abspath(names[0])
 
 
 def find_gem5_builds():
@@ -127,6 +187,46 @@ def find_gem5_builds():
     return sorted(found)
 
 
+def driver_results_dir():
+    """The results/run/ folder run_gem5.py copies its keepers into, under the
+    gem5 root, which is the directory the driver is run from."""
+    return os.path.join("results", "run")
+
+
+def job_dirs(label):
+    """The private folders one run works in. Each job gets its own, so
+    concurrent runs cannot overwrite each other's stats.txt, trace or
+    binary."""
+    return (os.path.join(GEM5_OUT_DIR, label),
+            os.path.join(driver_results_dir(), label))
+
+
+def discard_run(job_gem5_out, job_results):
+    """Delete a run's working folders once it has been collected. A debug
+    trace runs to hundreds of megabytes per run. Only this run's folders go, so
+    a failed run's output survives the rest of the runs."""
+    for path in (job_gem5_out, job_results):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_empty(path):
+    """Remove a folder the runs have emptied, leaving anything else alone.
+    Deliberately not a recursive delete. A plain run_gem5.py run writes
+    straight into these folders and that output is not this script's."""
+    try:
+        if os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+    except OSError:
+        pass
+
+# SHARED END py-gem5-run-dirs
+
+
+# SHARED BEGIN py-split-own-args
+
+# Needs: none
+
+
 def split_own_args(argv):
     """Split the command line into this script's arguments and the
     configuration's. Everything after a '--' is the configuration's, verbatim,
@@ -136,16 +236,39 @@ def split_own_args(argv):
         return argv[:cut], argv[cut + 1:]
     return argv, []
 
+# SHARED END py-split-own-args
+
+
+class SweepRefused(Exception):
+    """The sweep cannot start, for the reason in the message."""
+
+
+def find_beside_script(name, what, extra=()):
+    """Locate a file next to this script, then in the cwd, then anywhere in
+    extra. Raises SweepRefused naming every place looked in."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [os.path.join(here, name), os.path.abspath(name)]
+    candidates += [os.path.join(here, p, name) for p in extra]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    # Beside the script and the working directory are often one folder, so
+    # each place is named once.
+    places = dict.fromkeys(os.path.relpath(os.path.dirname(c))
+                           for c in candidates)
+    raise SweepRefused(f"{what} ({name}) not found. Looked in: "
+                       + ", ".join(places))
+
 
 def parse_table(text):
     """Parse the TEST table into {id: (description, workloads)}. Ids and names
-    come from the TESTS dict, workloads from the comment table above it, whose
-    rows may wrap onto continuation lines."""
+    come from the TESTS dict, workloads from the comment table above it. A
+    continuation line is appended to its row, so keep 'workload:' on the last
+    line of a wrapped row."""
     entries = {int(n): name for n, name in ENTRY_RE.findall(text)}
     if not entries:
         return {}
 
-    # Accumulate each comment row, including its continuation lines.
     comments = {}
     current = None
     for line in text.splitlines():
@@ -180,7 +303,7 @@ def resolve_all(table):
         for workload in workloads:
             if workload.lower() != "all" and workload not in named:
                 named.append(workload)
-    return sorted(named) if named else list(DEFAULT_ALL_TESTS)
+    return sorted(named)
 
 
 def suggest(name, tests_dir):
@@ -227,7 +350,8 @@ def resolve_test_file(name, tests_dir):
 
 
 def parse_config_selection(spec, table):
-    """Parse '1,4-6' into a sorted list of configuration ids."""
+    """Parse '1,4-6' into a sorted list of configuration ids. Raises
+    SweepRefused on a malformed or unknown id."""
     if not spec:
         return sorted(table)
 
@@ -241,21 +365,18 @@ def parse_config_selection(spec, table):
             try:
                 selected.update(range(int(low), int(high) + 1))
             except ValueError:
-                print(f"[ERROR] Bad configuration range: '{chunk}'")
-                sys.exit(2)
+                raise SweepRefused(f"Bad configuration range: '{chunk}'")
         else:
             try:
                 selected.add(int(chunk))
             except ValueError:
-                print(f"[ERROR] Bad configuration id: '{chunk}'")
-                sys.exit(2)
+                raise SweepRefused(f"Bad configuration id: '{chunk}'")
 
     unknown = sorted(selected - set(table))
     if unknown:
-        print(f"[ERROR] No such configuration(s): "
-              f"{', '.join(str(u) for u in unknown)}. "
-              f"The table has {min(table)}-{max(table)}.")
-        sys.exit(2)
+        raise SweepRefused(f"No such configuration(s): "
+                           f"{', '.join(str(u) for u in unknown)}. "
+                           f"The table has {min(table)}-{max(table)}.")
     return sorted(selected)
 
 
@@ -303,30 +424,13 @@ def build_plan(table, config_ids, tests_dir, override_tests):
     return plan
 
 
-def driver_results_dir():
-    """The results/run/ folder run_gem5.py copies its keepers into, under the
-    gem5 root, which is the directory the driver is run from."""
-    return os.path.join("results", "run")
-
-
-def job_dirs(runner, label):
-    """The private folders one run works in. Each job gets its own, so
-    concurrent runs cannot overwrite each other's stats.txt, trace or
-    binary."""
-    return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(), label))
-
-
 def write_config_copy(text, config_id, dest_dir, base_name):
     """Write a copy of the configuration with the selector set to config_id.
     The sweep runs copies rather than editing in place, so the file is never
-    modified, nothing needs restoring, and runs can go in parallel."""
-    new_text, count = SELECTOR_RE.subn(
+    modified, nothing needs restoring, and runs can go in parallel. main has
+    already checked the selector line is there."""
+    new_text = SELECTOR_RE.sub(
         lambda m: f"{m.group(1)}{config_id}{m.group(3)}", text, count=1)
-    if count != 1:
-        print(f"[ERROR] No '{SELECTOR_NAME} = <n>' line found in the "
-              f"configuration, so the {UNIT} cannot be selected.")
-        sys.exit(2)
     path = os.path.join(dest_dir, f"{LABEL}{config_id}_{base_name}")
     with open(path, "w") as f:
         f.write(new_text)
@@ -372,87 +476,9 @@ def keep_failed_config(config_copy, job_gem5_out):
         return None
 
 
-def discard_run(job_gem5_out, job_results):
-    """Delete a run's working folders once it has been collected. A debug
-    trace runs to hundreds of megabytes per run. Only this run's folders go, so
-    a failed run's output survives the sweep."""
-    for path in (job_gem5_out, job_results):
-        shutil.rmtree(path, ignore_errors=True)
-
-
-def prune_empty(path):
-    """Remove a folder the sweep has emptied, leaving anything else alone.
-    Deliberately not a recursive delete, a plain run_gem5.py run writes
-    straight into these folders and that output is not the sweep's."""
-    try:
-        if os.path.isdir(path) and not os.listdir(path):
-            os.rmdir(path)
-    except OSError:
-        pass
-
-
-def extract_metrics(report_path):
-    """The metrics section of a _report.txt, or None if it holds none. The
-    file is the measured disassembly then the metrics table, so everything from
-    the rule above the table's title to the end is what is wanted."""
-    try:
-        with open(report_path) as f:
-            lines = f.read().splitlines()
-    except OSError as e:
-        print(f"[WARN] Could not read {report_path}: {e}")
-        return None
-
-    for i, line in enumerate(lines):
-        if line.startswith(METRICS_MARKER):
-            # Take the rule above the title too, so the block arrives boxed.
-            start = i - 1 if i and set(lines[i - 1]) == {"="} else i
-            return "\n".join(lines[start:]).rstrip()
-
-    return None
-
-
-def write_metrics_file(out_dir, entries, info, filename):
-    """Gather every run's metrics table into one metrics.txt. entries is
-    [(label, report file)] in plan order, so the file reads like the summary
-    above it. A run with no table is named, not skipped."""
-    blocks, missing = [], []
-    for label, report_path in entries:
-        block = extract_metrics(report_path)
-        if block is None:
-            missing.append(label)
-            continue
-        blocks.append(f">>> {label}\n{block}")
-
-    if missing:
-        print(f"[WARN] No metrics table for: {', '.join(missing)}")
-    if not blocks:
-        print(f"[WARN] No metrics tables found, so no {filename} written")
-        return None
-
-    path = os.path.join(out_dir, filename)
-    try:
-        with open(path, "w") as f:
-            f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
-            for line in info:
-                f.write(line + "\n")
-            f.write(f"{SEP}\n\n")
-            f.write("\n\n".join(blocks) + "\n")
-    except OSError as e:
-        print(f"[WARN] Could not write {path}: {e}")
-        return None
-
-    print(f"[INFO] {len(blocks)} metrics table(s) gathered in {path}")
-    return path
-
-
-def format_duration(seconds):
-    minutes, secs = divmod(int(seconds), 60)
-    if minutes:
-        return f"{minutes}m{secs:02d}s"
-    return f"{seconds:.1f}s"
-
-
 def print_plan(plan, all_tests):
+    """Every configuration with the tests it will run. Returns the number of
+    runs."""
     print(f"[INFO] 'all' resolves to {len(all_tests)} workload(s): " +
           (", ".join(all_tests) if all_tests else "nothing") + "\n")
     total = 0
@@ -467,6 +493,7 @@ def print_plan(plan, all_tests):
 
 
 def print_summary(results, total_elapsed):
+    """The pass and fail table, in plan order. Returns how many failed."""
     print("\n" + SEP)
     print("SWEEP SUMMARY")
     print(SEP)
@@ -492,14 +519,17 @@ def print_summary(results, total_elapsed):
     return failed
 
 
-def main():
+def build_parser(driver):
+    """The sweep's command line, whose --suite and --variant choices are the
+    driver's own tables."""
     parser = argparse.ArgumentParser(
         description="Run the MinorFlow configuration sweep: each entry of the "
                     "TEST table, with the workloads it was made for.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"Always sweeps {DEFAULT_CONFIG}, which it is written for. An "
-               f"entry whose\nworkload is 'all' runs every workload named in "
-               f"the table.\nRun this from the gem5 root, like run_gem5.py.\n"
+        epilog=f"Sweeps {DEFAULT_CONFIG}, which it is written for, "
+               f"unless\n--config names a copy. An entry whose workload is "
+               f"'all' runs\nevery workload named in the table. Run this "
+               f"from the gem5 root,\nlike run_gem5.py.\n"
                f"\n"
                f"Any flag this script does not define is passed on to the "
                f"configuration\nbeing swept, through run_gem5.py and the same "
@@ -514,11 +544,11 @@ def main():
                         help="Which configurations to run, e.g. '1,4-6'. "
                              "Defaults to all of them")
     parser.add_argument("--tests-dir", default=None,
-                        help="Folder holding the workloads. When not given, "
-                             + " or ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
-                             + " is looked for in the current directory and "
-                             "beside this script's repository, in that "
-                             "order")
+                        help="Folder holding the workloads, resolved the way "
+                             "run_gem5.py resolves a path. Defaults to the "
+                             "first of "
+                             + ", ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
+                             + " that exists")
     parser.add_argument("--tests", default="",
                         help="Comma-separated workloads to run for every "
                              "configuration, instead of the ones the table "
@@ -537,11 +567,13 @@ def main():
     parser.add_argument("--no-trace", action="store_true",
                         help="Forwarded to run_gem5.py: no debug trace, "
                              "metrics only")
-    parser.add_argument("--suite", choices=["config", "viewer"], default=None,
+    parser.add_argument("--suite", choices=sorted(driver.OVERHEAD_SUITES),
+                        default=None,
                         help="Forwarded to run_gem5.py: which overhead table "
-                             "to subtract. Defaults to the one run_gem5.py "
-                             "picks from where it sits, 'viewer' here")
-    parser.add_argument("--variant", choices=["patch", "stock"],
+                             "to subtract. Defaults to the .overhead_suite "
+                             "beside each workload, and run_gem5.py stops "
+                             "without one")
+    parser.add_argument("--variant", choices=sorted(driver.GEM5_BUILDS),
                         default="stock",
                         help="Forwarded to run_gem5.py: which build to run "
                              "and whose overhead profile to subtract. This "
@@ -553,26 +585,15 @@ def main():
     parser.add_argument("--skip-build-check", action="store_true",
                         help="Forwarded to run_gem5.py: run even when the "
                              "build does not match --variant")
-    parser.add_argument("--list", action="store_true",
+    parser.add_argument("--dry-run", action="store_true",
                         help="Print the plan and exit, touching nothing")
-    own_argv, after_separator = split_own_args(sys.argv[1:])
-    args, unrecognised = parser.parse_known_args(own_argv)
+    return parser
 
-    # A bare word among the leftovers is nearly always a mistyped option, and
-    # a flag that takes a value has to go after the '--' anyway. Refuse it
-    # rather than have every run in the sweep fail the same way inside gem5.
-    stray = [a for a in unrecognised if not a.startswith("-")]
-    if stray:
-        print(f"[ERROR] Unrecognised argument(s): {' '.join(stray)}. "
-              f"Flags for the configuration are passed straight through, "
-              f"anything that takes a value goes after a '--'.")
-        sys.exit(2)
-    config_args = unrecognised + after_separator
 
-    # Keep our output interleaved correctly with each run_gem5.py run.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(line_buffering=True)
-
+def plan_sweep(args, config_args, resolve_input):
+    """Read the configuration's table, print the header and the plan, and
+    return (config path, config text, plan). Raises SweepRefused when there
+    is nothing that can run."""
     config_path = (os.path.abspath(args.config) if args.config
                    else find_beside_script(
                        DEFAULT_CONFIG, "Sweep config",
@@ -584,30 +605,33 @@ def main():
                            os.path.join("..", "gem5_configs", "viewer"),
                            os.path.join("..", "gem5_configs", "config")]))
     if not os.path.isfile(config_path):
-        print(f"[ERROR] The configuration file '{config_path}' does not exist")
-        sys.exit(2)
+        raise SweepRefused(f"Configuration not found: {config_path}")
 
     with open(config_path) as f:
         config_text = f.read()
 
     table = parse_table(config_text)
     if not table:
-        print(f"[ERROR] No TEST table found in {config_path}. Expected a "
-              f"'TESTS = {{...}}' dict keyed by integer.")
-        sys.exit(2)
+        raise SweepRefused(
+            f"No TEST table found in {config_path}. Expected a "
+            f"'TESTS = {{...}}' dict keyed by integer.")
+    if not SELECTOR_RE.search(config_text):
+        raise SweepRefused(
+            f"No 'TEST = <n>' line found in {config_path}, so a "
+            f"configuration cannot be selected.")
 
     config_ids = parse_config_selection(args.configs, table)
     override_tests = [t.strip() for t in args.tests.split(",") if t.strip()]
     all_tests = override_tests if override_tests else resolve_all(table)
     # Resolved once, here, so every later use and every printed path is the
     # folder actually being read.
-    args.tests_dir = find_tests_dir(args.tests_dir)
+    args.tests_dir = find_tests_dir(args.tests_dir, resolve_input)
 
     print(SEP)
     print("MINORFLOW SWEEP")
     print(SEP)
     print(f"Config    : {config_path}")
-    print(f"Tests dir : {os.path.abspath(args.tests_dir)}")
+    print(f"Tests dir : {args.tests_dir}")
     print(f"Out dir   : {os.path.abspath(args.out_dir)}")
     print(f"Jobs      : {max(1, args.jobs)}")
     print(f"Tracing   : "
@@ -617,48 +641,33 @@ def main():
     print(SEP + "\n")
 
     if not os.path.isdir(args.tests_dir):
-        print(f"[ERROR] The tests folder {args.tests_dir} does not exist")
-        sys.exit(2)
+        raise SweepRefused(f"Folder not found: {args.tests_dir}")
 
     plan = build_plan(table, config_ids, args.tests_dir, override_tests)
-    total_runs = print_plan(plan, all_tests)
+    print_plan(plan, all_tests)
+    return config_path, config_text, plan
 
-    if args.list:
-        print("[INFO] Listing only, nothing run.")
-        return 0
-    if not total_runs:
-        print("[ERROR] Nothing to run.")
-        sys.exit(2)
 
-    # run_gem5.py resolves the gem5 root from the cwd, so this has to be run
-    # from there. Say so now instead of failing later on a missing binary.
-    if not find_gem5_builds():
-        print(f"[ERROR] No built gem5 found under build/ in {os.getcwd()}. "
-              f"Run this from the gem5 root.")
-        sys.exit(2)
-
-    runner = find_beside_script(RUNNER_NAME, "Runner")
+def run_queue(args, runner, config_args, config_text, base_name, plan,
+              out_dir):
+    """Run every test of every planned configuration, a copy of the
+    configuration per id, and return [(index, config id, test, exit code,
+    seconds)] in the order the runs finished."""
     config_dir = tempfile.mkdtemp(prefix="sweep_configs_")
-    out_dir = os.path.abspath(args.out_dir)
-    os.makedirs(out_dir, exist_ok=True)
     jobs = max(1, args.jobs)
-
-    base_name = os.path.basename(config_path)
-    print(f"\n[INFO] Sweeping copies of {base_name}. The file itself is "
-          f"never modified.")
-
     # One lock around the reporting, so a finished run's output arrives as one
     # block instead of interleaved with another's.
     report_lock = threading.Lock()
     results = []
-    sweep_start = time.time()
+    stop = threading.Event()
 
     def run_one(index, total, config_id, config_copy, path):
+        """Run one test of one configuration and collect or keep it."""
         if stop.is_set():
             return
         test_name = os.path.splitext(os.path.basename(path))[0]
         label = f"{LABEL}{config_id}_{test_name}"
-        job_gem5_out, job_results = job_dirs(runner, label)
+        job_gem5_out, job_results = job_dirs(label)
         # Anything left from an earlier sweep would otherwise be collected.
         discard_run(job_gem5_out, job_results)
 
@@ -680,11 +689,18 @@ def main():
             cmd.extend(["--"] + config_args)
 
         start = time.time()
+        interrupted = False
         if jobs == 1:
             print("\n" + SEP)
             print(f"[{index}/{total}] {LABEL}{config_id}: {test_name}")
             print(SEP + "\n")
-            code = subprocess.run(cmd).returncode
+            try:
+                code = subprocess.run(cmd).returncode
+            except KeyboardInterrupt:
+                # Reported as failed with the shell's code for an interrupt,
+                # and its output kept, like any other failed run.
+                code, interrupted = 130, True
+                stop.set()
             output = None
         else:
             done = subprocess.run(cmd, capture_output=True, text=True)
@@ -702,8 +718,13 @@ def main():
                 # debug with. run_gem5.py writes the whole of gem5's stdout
                 # and stderr into that folder as <test>_error.log.
                 kept = keep_failed_config(config_copy, job_gem5_out)
-                print(f"[WARN] '{test_name}' failed with exit code {code}. "
-                      f"Its output is left in {job_gem5_out}. Continuing.")
+                if interrupted:
+                    print(f"[WARN] '{test_name}' was interrupted. Its output "
+                          f"is left in {job_gem5_out}.")
+                else:
+                    print(f"[WARN] '{test_name}' failed with exit code "
+                          f"{code}. Its output is left in {job_gem5_out}. "
+                          f"Continuing with the rest.")
                 if kept:
                     print(f"[WARN] The configuration it ran is kept as "
                           f"{kept}")
@@ -715,14 +736,14 @@ def main():
                           f"{out_dir} as *.{LABEL}{config_id}.*")
                 discard_run(job_gem5_out, job_results)
             results.append((index, config_id, test_name, code, elapsed))
+        if interrupted:
+            raise KeyboardInterrupt
 
-    stop = threading.Event()
     pool = None
     try:
         # One copy of the configuration per id, each with its selector set.
         queue = []
-        for entry in plan:
-            config_id, paths = entry[0], entry[-1]
+        for config_id, _, paths in plan:
             if not paths:
                 continue
             config_copy = write_config_copy(config_text, config_id,
@@ -747,16 +768,22 @@ def main():
     except KeyboardInterrupt:
         stop.set()
         print("\n[WARN] Interrupted. Cancelling the runs that have not "
-              "started. The ones already running finish first.")
+              "started. The ones already running are interrupted and "
+              "reported as failed.")
     finally:
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
         shutil.rmtree(config_dir, ignore_errors=True)
+    return results
 
+
+def gather(args, config_args, base_name, out_dir, results, elapsed):
+    """Print the summary, gather the metrics tables of the runs that passed
+    and prune what the sweep emptied. Returns how many runs failed."""
     # Report in plan order, not the order the runs finished.
-    ordered = [(cid, name, code, elapsed)
-               for _, cid, name, code, elapsed in sorted(results)]
-    failed = print_summary(ordered, time.time() - sweep_start)
+    ordered = [(cid, name, code, seconds)
+               for _, cid, name, code, seconds in sorted(results)]
+    failed = print_summary(ordered, elapsed)
 
     # Only a run that passed left a table behind to gather.
     write_metrics_file(
@@ -770,7 +797,7 @@ def main():
          + ("  [--skip-build-check]" if args.skip_build_check else ""),
          f"Suite    : {args.suite or '(run_gem5.py default)'}",
          f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
-         f"Tests dir: {os.path.abspath(args.tests_dir)}",
+         f"Tests dir: {args.tests_dir}",
          f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"],
         metrics_filename([os.path.splitext(base_name)[0], args.variant,
                           args.build, args.suite, " ".join(config_args)]))
@@ -783,7 +810,65 @@ def main():
     # in there stays.
     prune_empty(driver_results_dir())
     prune_empty(GEM5_OUT_DIR)
+    return failed
+
+
+def run_sweep():
+    """Plan, run and gather the sweep. Returns 1 when a run failed, and
+    raises SweepRefused when the sweep cannot start."""
+    runner = find_beside_script(RUNNER_NAME, "Runner")
+    driver = load_runner(runner)
+    own_argv, after_separator = split_own_args(sys.argv[1:])
+    args, unrecognised = build_parser(driver).parse_known_args(own_argv)
+
+    stray = [a for a in unrecognised if not a.startswith("-")]
+    if stray:
+        raise SweepRefused(
+            f"Unrecognised argument(s): {' '.join(stray)}. Flags for the "
+            f"configuration are passed straight through, anything that takes "
+            f"a value goes after a '--'.")
+    config_args = unrecognised + after_separator
+
+    # Keep our output interleaved correctly with each run_gem5.py run.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
+    config_path, config_text, plan = plan_sweep(args, config_args,
+                                                driver.resolve_input)
+    if args.dry_run:
+        print("[INFO] Dry run, nothing executed.")
+        return 0
+    if not any(paths for _, _, paths in plan):
+        raise SweepRefused("Nothing to run.")
+
+    # run_gem5.py resolves the gem5 root from the cwd, so this has to be run
+    # from there. Say so now instead of failing later on a missing binary.
+    if not find_gem5_builds():
+        raise SweepRefused(
+            f"No built gem5 found under build/ in {os.getcwd()}. Run this "
+            f"from the gem5 root.")
+
+    out_dir = os.path.abspath(args.out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    base_name = os.path.basename(config_path)
+    print(f"\n[INFO] Sweeping copies of {base_name}. The file itself is "
+          f"never modified.")
+
+    start = time.time()
+    results = run_queue(args, runner, config_args, config_text, base_name,
+                        plan, out_dir)
+    failed = gather(args, config_args, base_name, out_dir, results,
+                    time.time() - start)
     return 1 if failed else 0
+
+
+def main():
+    """Run the sweep, turning a refusal into one [ERROR] line and exit 2."""
+    try:
+        return run_sweep()
+    except SweepRefused as refusal:
+        print(f"[ERROR] {refusal}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
