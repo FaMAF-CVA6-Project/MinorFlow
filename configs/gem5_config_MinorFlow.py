@@ -1,18 +1,20 @@
+# type: ignore
+# The m5 and gem5 packages exist only inside gem5, so this file cannot be
+# type-checked outside it.
 import argparse
 
-from m5.params import NULL  # type: ignore
-from gem5.components.boards.simple_board import SimpleBoard  # type: ignore
-from gem5.components.processors.base_cpu_core import BaseCPUCore  # type: ignore
-from gem5.components.processors.base_cpu_processor import BaseCPUProcessor  # type: ignore
-from gem5.components.memory.simple import SingleChannelSimpleMemory  # type: ignore
-from gem5.components.cachehierarchies.classic.private_l1_cache_hierarchy import (  # type: ignore
-    PrivateL1CacheHierarchy,
-)
-from gem5.isas import ISA  # type: ignore
-from gem5.simulate.simulator import Simulator  # type: ignore
-from gem5.resources.resource import BinaryResource  # type: ignore
+from m5.params import NULL
+from gem5.components.boards.simple_board import SimpleBoard
+from gem5.components.processors.base_cpu_core import BaseCPUCore
+from gem5.components.processors.base_cpu_processor import BaseCPUProcessor
+from gem5.components.memory.simple import SingleChannelSimpleMemory
+from gem5.components.cachehierarchies.classic.private_l1_cache_hierarchy \
+    import PrivateL1CacheHierarchy
+from gem5.isas import ISA
+from gem5.simulate.simulator import Simulator
+from gem5.resources.resource import BinaryResource
 
-from m5.objects import (  # type: ignore
+from m5.objects import (
     LocalBP,
     TournamentBP,
     LRURP,
@@ -56,41 +58,41 @@ SLOW_CACHE = {"tag_latency": 3, "data_latency": 3, "response_latency": 3}
 # the row, which is after 'workload:', so a wrapped row swallows it into the
 # workload name and resolves nothing.
 #
-#   1   adopted baseline                          workload: all
-#   2   fetch2ToDecodeForwardDelay 1 -> 2         workload: daxpy
-#   3   decodeToExecuteForwardDelay 1 -> 2        workload: daxpy
-#   4   fetch1LineWidth and snap 4 -> 16          workload: icache_hit_loop
-#   5   fetch1FetchLimit 1 -> 4, L1I 16K -> 2K    workload: icache_hit_loop
-#   6   fetch2InputBufferSize 3 -> 6              workload: int_loop
-#   7   decodeInputBufferSize 4 -> 8              workload: int_loop
-#   8   executeInputBufferSize 8 -> 3             workload: int_loop
-#   9   dual issue, 2-wide                        workload: matrix_mul
-#  10   executeCommitLimit 2 -> 1, 2-wide pipe    workload: matrix_mul
-#  11   branchPred LocalBP -> TournamentBP        workload: branch_stress
-#  12   L1D access latency 1 -> 3                 workload: dcache_hit_loop
-#  13   executeLSQStoreBufferSize 16 -> 2         workload: stream_store
-#  14   baseline at 47 MHz, clock only            workload: int_loop
-#  15   L1I access latency 1 -> 3                 workload: icache_hit_loop
-#  16   executeBranchDelay 1 -> 10                workload: branch_stress
-#  17   combination, 2-wide and slow, 60 MHz      workload: daxpy
+#   1   baseline                                    workload: all
+#   2   fetch2ToDecodeForwardDelay 1 -> 2           workload: daxpy
+#   3   decodeToExecuteForwardDelay 1 -> 2          workload: daxpy
+#   4   fetch1LineWidth and snap 4 -> 16            workload: icache_hit_loop
+#   5   fetch1FetchLimit 1 -> 4, L1I 16KiB -> 2KiB  workload: icache_hit_loop
+#   6   fetch2InputBufferSize 3 -> 6                workload: int_loop
+#   7   decodeInputBufferSize 4 -> 8                workload: int_loop
+#   8   executeInputBufferSize 8 -> 3               workload: int_loop
+#   9   dual issue, 2-wide                          workload: matrix_mul
+#  10   executeCommitLimit 2 -> 1, 2-wide pipe      workload: matrix_mul
+#  11   branchPred LocalBP -> TournamentBP          workload: branch_stress
+#  12   L1D access latency 1 -> 3                   workload: dcache_hit_loop
+#  13   executeLSQStoreBufferSize 16 -> 2           workload: stream_store
+#  14   baseline at 47 MHz, clock only              workload: int_loop
+#  15   L1I access latency 1 -> 3                   workload: icache_hit_loop
+#  16   executeBranchDelay 1 -> 10                  workload: branch_stress
+#  17   combination, 2-wide and slow, 60 MHz        workload: daxpy
 
 TESTS = {
-    1:  ("baseline",                           {}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    2:  ("fetch2ToDecodeForwardDelay 1->2",    {"fetch2ToDecodeForwardDelay": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    3:  ("decodeToExecuteForwardDelay 1->2",   {"decodeToExecuteForwardDelay": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    4:  ("fetch1LineWidth and snap 4->16",     {"fetch1LineWidth": 16, "fetch1LineSnapWidth": 16}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    5:  ("fetch1FetchLimit 1->4, L1I 16K->2K", {"fetch1FetchLimit": 4}, "2KiB", "32KiB", {}, {}, "100MHz"),
-    6:  ("fetch2InputBufferSize 3->6",         {"fetch2InputBufferSize": 6}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    7:  ("decodeInputBufferSize 4->8",         {"decodeInputBufferSize": 8}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    8:  ("executeInputBufferSize 8->3",        {"executeInputBufferSize": 3}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    9:  ("dual issue 2-wide",                  dict(TWO_WIDE), "16KiB", "32KiB", {}, {}, "100MHz"),
-    10: ("commit 2->1 on a 2-wide pipe",       {**TWO_WIDE, "executeCommitLimit": 1}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    11: ("branchPred LocalBP->TournamentBP",   {"branchPred": "TournamentBP"}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    12: ("L1D access latency 1->3",            {}, "16KiB", "32KiB", dict(SLOW_CACHE), {}, "100MHz"),
-    13: ("executeLSQStoreBufferSize 16->2",    {"executeLSQStoreBufferSize": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
-    14: ("baseline at 47MHz",                  {}, "16KiB", "32KiB", {}, {}, "47MHz"),
-    15: ("L1I access latency 1->3",            {}, "16KiB", "32KiB", {}, dict(SLOW_CACHE), "100MHz"),
-    16: ("executeBranchDelay 1->10",           {"executeBranchDelay": 10}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    1:  ("baseline",                               {}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    2:  ("fetch2ToDecodeForwardDelay 1->2",        {"fetch2ToDecodeForwardDelay": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    3:  ("decodeToExecuteForwardDelay 1->2",       {"decodeToExecuteForwardDelay": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    4:  ("fetch1LineWidth and snap 4->16",         {"fetch1LineWidth": 16, "fetch1LineSnapWidth": 16}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    5:  ("fetch1FetchLimit 1->4, L1I 16KiB->2KiB", {"fetch1FetchLimit": 4}, "2KiB", "32KiB", {}, {}, "100MHz"),
+    6:  ("fetch2InputBufferSize 3->6",             {"fetch2InputBufferSize": 6}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    7:  ("decodeInputBufferSize 4->8",             {"decodeInputBufferSize": 8}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    8:  ("executeInputBufferSize 8->3",            {"executeInputBufferSize": 3}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    9:  ("dual issue 2-wide",                      dict(TWO_WIDE), "16KiB", "32KiB", {}, {}, "100MHz"),
+    10: ("commit 2->1 on a 2-wide pipe",           {**TWO_WIDE, "executeCommitLimit": 1}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    11: ("branchPred LocalBP->TournamentBP",       {"branchPred": "TournamentBP"}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    12: ("L1D access latency 1->3",                {}, "16KiB", "32KiB", dict(SLOW_CACHE), {}, "100MHz"),
+    13: ("executeLSQStoreBufferSize 16->2",        {"executeLSQStoreBufferSize": 2}, "16KiB", "32KiB", {}, {}, "100MHz"),
+    14: ("baseline at 47MHz",                      {}, "16KiB", "32KiB", {}, {}, "47MHz"),
+    15: ("L1I access latency 1->3",                {}, "16KiB", "32KiB", {}, dict(SLOW_CACHE), "100MHz"),
+    16: ("executeBranchDelay 1->10",               {"executeBranchDelay": 10}, "16KiB", "32KiB", {}, {}, "100MHz"),
     17: ("combination (2-wide, slow caches, delays)",
          {**TWO_WIDE, "executeBranchDelay": 5,
           "fetch2ToDecodeForwardDelay": 2, "decodeToExecuteForwardDelay": 2},
@@ -123,12 +125,12 @@ class RISCVFUPool(MinorFUPool):
         int_div.opLat = 20
         int_div.issueLat = 20
 
-        fp_fast_A = MinorFU(
+        fp_fast_a = MinorFU(
             opClasses=minorMakeOpClassSet(['FloatAdd', 'FloatCvt']),
             opLat=3, issueLat=1
         )
 
-        fp_fast_B = MinorFU(
+        fp_fast_b = MinorFU(
             opClasses=minorMakeOpClassSet(['FloatMult', 'FloatMultAcc']),
             opLat=4, issueLat=1
         )
@@ -167,11 +169,13 @@ class RISCVFUPool(MinorFUPool):
         simd_complex.opClasses = minorMakeOpClassSet([
             'SimdAddAcc', 'SimdCvt', 'SimdMult', 'SimdMultAcc',
             'SimdFloatAdd', 'SimdFloatAlu', 'SimdFloatCmp', 'SimdFloatCvt',
-            'SimdFloatMisc', 'SimdFloatMult', 'SimdFloatMultAcc', 'SimdFloatExt',
+            'SimdFloatMisc', 'SimdFloatMult', 'SimdFloatMultAcc',
+            'SimdFloatExt',
             'SimdReduceAdd', 'SimdReduceAlu', 'SimdReduceCmp',
             'SimdFloatReduceAdd', 'SimdFloatReduceCmp',
             'SimdAes', 'SimdAesMix', 'SimdSha1Hash', 'SimdSha1Hash2',
-            'SimdSha256Hash', 'SimdSha256Hash2', 'SimdShaSigma2', 'SimdShaSigma3'
+            'SimdSha256Hash', 'SimdSha256Hash2', 'SimdShaSigma2',
+            'SimdShaSigma3'
         ])
         simd_complex.timings = [MinorFUTiming(
             description='SimdComplex', srcRegsRelativeLats=[2])]
@@ -213,7 +217,8 @@ class RISCVFUPool(MinorFUPool):
             'SimdWholeRegisterLoad', 'SimdWholeRegisterStore'
         ])
         vec_mem_fast.timings = [MinorFUTiming(
-            description='VecMemFast', srcRegsRelativeLats=[1], extraAssumedLat=2)]
+            description='VecMemFast', srcRegsRelativeLats=[1],
+            extraAssumedLat=2)]
         vec_mem_fast.opLat = 2
         vec_mem_fast.issueLat = 1
 
@@ -223,7 +228,8 @@ class RISCVFUPool(MinorFUPool):
             'SimdIndexedLoad', 'SimdIndexedStore'
         ])
         vec_mem_slow.timings = [MinorFUTiming(
-            description='VecMemSlow', srcRegsRelativeLats=[1], extraAssumedLat=2)]
+            description='VecMemSlow', srcRegsRelativeLats=[1],
+            extraAssumedLat=2)]
         vec_mem_slow.opLat = 10
         vec_mem_slow.issueLat = 4
 
@@ -233,7 +239,7 @@ class RISCVFUPool(MinorFUPool):
         misc.issueLat = 1
 
         self.funcUnits = [
-            int_alu, int_mul, int_div, fp_fast_A, fp_fast_B,
+            int_alu, int_mul, int_div, fp_fast_a, fp_fast_b,
             fp_sqrt, fp_div, fp_cmp, mem_fu, simd_int_fast,
             simd_complex, simd_matrix, simd_div_sqrt, pred,
             vec_mem_fast, vec_mem_slow, misc,
@@ -315,7 +321,8 @@ class Processor(BaseCPUProcessor):
 
 
 class CacheHierarchy(PrivateL1CacheHierarchy):
-    def __init__(self, l1d_size, l1i_size, dcache_overrides=None, icache_overrides=None):
+    def __init__(self, l1d_size, l1i_size, dcache_overrides=None,
+                 icache_overrides=None):
         super().__init__(l1d_size=l1d_size, l1i_size=l1i_size)
         self._dcache_overrides = dict(dcache_overrides or {})
         self._icache_overrides = dict(icache_overrides or {})
@@ -323,7 +330,7 @@ class CacheHierarchy(PrivateL1CacheHierarchy):
     def incorporate_cache(self, board):
         super().incorporate_cache(board)
 
-        for i, core in enumerate(board.get_processor().get_cores()):
+        for i in range(len(board.get_processor().get_cores())):
             self.l1icaches[i].assoc = 4
             self.l1icaches[i].tag_latency = 1
             self.l1icaches[i].data_latency = 1
@@ -346,8 +353,7 @@ class CacheHierarchy(PrivateL1CacheHierarchy):
             self.l1dcaches[i].writeback_clean = False
             self.l1dcaches[i].prefetcher = NULL
 
-            # Per-test overrides are applied last so they win over the
-            # defaults.
+            # Last, so a test's overrides win over the defaults above.
             for key, value in self._icache_overrides.items():
                 setattr(self.l1icaches[i], key, value)
             for key, value in self._dcache_overrides.items():
@@ -362,7 +368,8 @@ args = parser.parse_args()
 
 if TEST not in TESTS:
     raise ValueError(
-        f"TEST={TEST} is not in the test table. Valid IDs: {sorted(TESTS.keys())}")
+        f"TEST={TEST} is not in the test table. "
+        f"Valid IDs: {sorted(TESTS.keys())}")
 (test_name, cpu_overrides, l1i_size, l1d_size, dcache_overrides,
  icache_overrides, clk_freq) = TESTS[TEST]
 
