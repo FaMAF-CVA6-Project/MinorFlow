@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Run every benchmark in a folder through run_gem5.py, dropping the
 templates and printing a pass/fail summary. Run it from the gem5 root, which
-run_gem5.py takes as the current directory.
+run_gem5.py takes as the current directory:
+
+    python3 scripts/run_all_gem5_benchmarks.py \
+        configs/gem5_config_MinorFlow.py benchmarks/
 """
 import argparse
 import concurrent.futures
 import glob
+import importlib.util
 import os
 import re
 import shutil
@@ -14,12 +18,13 @@ import sys
 import threading
 import time
 
-# ==============================================================================
+# =============================================================================
 # CONFIGURATION
-# ==============================================================================
-# Default folder, relative to the gem5 root. One folder per suite, since
-# the overhead tables are indexed by suite and the templates differ.
-DEFAULT_TESTS_DIR = "benchmarks/config"
+# =============================================================================
+# Default folders, tried against the gem5 root and then this repository. The
+# viewer's own suite comes first, as in the sweep, and this repository's flat
+# benchmarks/ last.
+DEFAULT_TESTS_DIRS = ("benchmarks/viewer", "benchmarks/config", "benchmarks")
 
 # The driver this script delegates to, looked up next to it and then in cwd.
 RUNNER_NAME = "run_gem5.py"
@@ -34,12 +39,12 @@ GEM5_OUT_DIR = os.path.join("results", "m5out")
 # Where the batch gathers what it keeps, one folder for the whole run.
 DEFAULT_OUT_DIR = os.path.join("results", "batch")
 
-# Tests to run at a time. Deliberately below the core count: each run holds
-# a gem5 process and writes a trace, so memory and disk bind before cores do.
+# Tests to run at a time, capped at 4: each run holds a gem5 process and
+# writes a trace, so memory and disk bind before cores do.
 DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 
-# Recognised test extensions, matching run_gem5.py. Case-sensitive: .S is
-# assembly and .s is too, but .c is the only C spelling accepted.
+# Recognised test extensions. Case-sensitive, unlike run_gem5.py's own
+# detection, so a .C or .ASM file is not picked up.
 SOURCE_EXTS = {".c", ".S", ".s", ".asm", ".sx"}
 
 # A file whose name contains this is a starting point, not a benchmark.
@@ -52,24 +57,47 @@ METRICS_MARKER = "RESULTS TABLE"
 SEP = "=" * 70
 
 
-def resolve_config(path):
-    """A configuration named alone, found in configs/. run_gem5.py resolves
-    the same way, so the two agree on what a bare name means."""
-    if os.path.isfile(path):
-        return path
-    for folder in ("gem5_configs", os.path.join("gem5_configs", "config"),
-                   os.path.join("gem5_configs", "viewer"), "configs"):
-        candidate = os.path.join(folder, os.path.basename(path))
-        if os.path.isfile(candidate):
-            return candidate
-    return path
+# SHARED BEGIN py-run-helpers
+
+# Needs: os, re, METRICS_MARKER, SEP
 
 
 def slug(text, limit=40):
-    """Turn a value into something safe for a file name: word characters and
-    single dashes, trimmed."""
+    """Turn a value into something safe for a file name: ASCII letters and
+    digits kept, each run of anything else one dash, trimmed of dashes at both
+    ends and cut to limit characters."""
     out = re.sub(r"[^A-Za-z0-9]+", "-", str(text)).strip("-")
     return out[:limit].strip("-")
+
+
+def format_duration(seconds):
+    # Rounded to the one decimal it prints, before the split, so 59.99 reads
+    # 1m00s and never 60.0s.
+    seconds = round(seconds, 1)
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{seconds:.1f}s"
+
+
+def extract_metrics(report_path):
+    """The metrics section of a _report.txt, or None if it holds none. The
+    file is the measured disassembly then the metrics table, so everything from
+    the rule above the table's title to the end is what is wanted."""
+    try:
+        with open(report_path) as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        print(f"[WARN] Could not read {report_path}: {e}")
+        return None
+
+    for i, line in enumerate(lines):
+        if line.startswith(METRICS_MARKER):
+            # Take the rule above the title too, so the block arrives boxed.
+            start = i - 1 if i and set(lines[i - 1]) == {"="} else i
+            return "\n".join(lines[start:]).rstrip()
+
+    return None
 
 
 def metrics_filename(parts):
@@ -78,16 +106,68 @@ def metrics_filename(parts):
     return "metrics" + ("_" if tags else "") + "_".join(tags) + ".txt"
 
 
-def find_runner():
-    """Locate run_gem5.py next to this script, then in the cwd."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    for candidate in (os.path.join(here, RUNNER_NAME),
-                      os.path.abspath(RUNNER_NAME)):
-        if os.path.isfile(candidate):
-            return candidate
-    print(f"[ERROR] {RUNNER_NAME} not found next to this script or in the "
-          f"current directory.")
-    sys.exit(2)
+def write_metrics_file(out_dir, entries, info, filename):
+    """Gather every run's metrics table into one file, named filename.
+    entries is [(label, report file)] in the order of the summary, so the
+    file reads like it. A run with no table is named, not skipped."""
+    blocks, missing = [], []
+    for label, report_path in entries:
+        block = extract_metrics(report_path)
+        if block is None:
+            missing.append(label)
+            continue
+        blocks.append(f">>> {label}\n{block}")
+
+    if missing:
+        print(f"[WARN] No metrics table for: {', '.join(missing)}")
+    if not blocks:
+        print(f"[WARN] No metrics tables found, so no {filename} written")
+        return None
+
+    path = os.path.join(out_dir, filename)
+    try:
+        with open(path, "w") as f:
+            f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
+            for line in info:
+                f.write(line + "\n")
+            f.write(f"{SEP}\n\n")
+            f.write("\n\n".join(blocks) + "\n")
+    except OSError as e:
+        print(f"[WARN] Could not write {path}: {e}")
+        return None
+
+    print(f"[INFO] {len(blocks)} metrics table(s) gathered in {path}")
+    return path
+
+# SHARED END py-run-helpers
+
+
+# SHARED BEGIN py-gem5-run-dirs
+
+# Needs: glob, importlib.util, os, shutil, DEFAULT_TESTS_DIRS,
+# GEM5_BINARY_NAMES, GEM5_OUT_DIR
+
+
+def load_runner(path):
+    """run_gem5.py as a module, so its tables decide what --suite and
+    --variant accept and its resolve_input what a name means here."""
+    spec = importlib.util.spec_from_file_location("run_gem5", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def find_tests_dir(given, resolve_input):
+    """The folder holding the tests: the one given, else the first of
+    DEFAULT_TESTS_DIRS that resolves to a folder, else the first name, so
+    the error names something concrete."""
+    names = (given,) if given else DEFAULT_TESTS_DIRS
+    for name in names:
+        # Without the trailing slash, so the fallback matches it by name.
+        folder = resolve_input(name.rstrip(os.sep) or name)
+        if os.path.isdir(folder):
+            return os.path.abspath(folder)
+    return os.path.abspath(names[0])
 
 
 def find_gem5_builds():
@@ -99,6 +179,46 @@ def find_gem5_builds():
     return sorted(found)
 
 
+def driver_results_dir():
+    """The results/run/ folder run_gem5.py copies its keepers into, under the
+    gem5 root, which is the directory the driver is run from."""
+    return os.path.join("results", "run")
+
+
+def job_dirs(label):
+    """The private folders one run works in. Each job gets its own, so
+    concurrent runs cannot overwrite each other's stats.txt, trace or
+    binary."""
+    return (os.path.join(GEM5_OUT_DIR, label),
+            os.path.join(driver_results_dir(), label))
+
+
+def discard_run(job_gem5_out, job_results):
+    """Delete a run's working folders once it has been collected. A debug
+    trace runs to hundreds of megabytes per run. Only this run's folders go, so
+    a failed run's output survives the rest of the runs."""
+    for path in (job_gem5_out, job_results):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_empty(path):
+    """Remove a folder the runs have emptied, leaving anything else alone.
+    Deliberately not a recursive delete. A plain run_gem5.py run writes
+    straight into these folders and that output is not this script's."""
+    try:
+        if os.path.isdir(path) and not os.listdir(path):
+            os.rmdir(path)
+    except OSError:
+        pass
+
+# SHARED END py-gem5-run-dirs
+
+
+# SHARED BEGIN py-split-own-args
+
+# Needs: none
+
+
 def split_own_args(argv):
     """Split the command line into this script's arguments and the
     configuration's. Everything after a '--' is the configuration's, verbatim,
@@ -107,6 +227,18 @@ def split_own_args(argv):
         cut = argv.index("--")
         return argv[:cut], argv[cut + 1:]
     return argv, []
+
+# SHARED END py-split-own-args
+
+
+def find_runner():
+    """Locate run_gem5.py next to this script, then in the cwd, or None."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (os.path.join(here, RUNNER_NAME),
+                      os.path.abspath(RUNNER_NAME)):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def discover(folder, recursive):
@@ -155,20 +287,6 @@ def warn_duplicates(tests, folder):
           "rename them.\n")
 
 
-def driver_results_dir():
-    """The results/run/ folder run_gem5.py copies its keepers into, under the
-    gem5 root, which is the directory the driver is run from."""
-    return os.path.join("results", "run")
-
-
-def job_dirs(runner, label):
-    """The private folders one run works in. Each job gets its own, so
-    concurrent runs cannot overwrite each other's stats.txt, trace or
-    binary."""
-    return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(), label))
-
-
 def collect(job_results, out_dir, want_trace):
     """Move a finished run's four files into the batch's out folder."""
     collected = []
@@ -192,87 +310,9 @@ def collect(job_results, out_dir, want_trace):
     return collected
 
 
-def discard_run(job_gem5_out, job_results):
-    """Delete a run's working folders once it has been collected. A debug
-    trace runs to hundreds of megabytes per run. Only this run's folders go, so
-    a failed run's output survives the batch."""
-    for path in (job_gem5_out, job_results):
-        shutil.rmtree(path, ignore_errors=True)
-
-
-def prune_empty(path):
-    """Remove a folder the batch has emptied, leaving anything else alone.
-    Deliberately not a recursive delete, a plain run_gem5.py run writes
-    straight into these folders and that output is not the batch's."""
-    try:
-        if os.path.isdir(path) and not os.listdir(path):
-            os.rmdir(path)
-    except OSError:
-        pass
-
-
-def extract_metrics(report_path):
-    """The metrics section of a _report.txt, or None if it holds none. The
-    file is the measured disassembly then the metrics table, so everything from
-    the rule above the table's title to the end is what is wanted."""
-    try:
-        with open(report_path) as f:
-            lines = f.read().splitlines()
-    except OSError as e:
-        print(f"[WARN] Could not read {report_path}: {e}")
-        return None
-
-    for i, line in enumerate(lines):
-        if line.startswith(METRICS_MARKER):
-            # Take the rule above the title too, so the block arrives boxed.
-            start = i - 1 if i and set(lines[i - 1]) == {"="} else i
-            return "\n".join(lines[start:]).rstrip()
-
-    return None
-
-
-def write_metrics_file(out_dir, entries, info, filename):
-    """Gather every run's metrics table into one metrics.txt. entries is
-    [(label, report file)] in the order the runs were listed, so the file reads
-    like the summary. A run with no table is named, not skipped."""
-    blocks, missing = [], []
-    for label, report_path in entries:
-        block = extract_metrics(report_path)
-        if block is None:
-            missing.append(label)
-            continue
-        blocks.append(f">>> {label}\n{block}")
-
-    if missing:
-        print(f"[WARN] No metrics table for: {', '.join(missing)}")
-    if not blocks:
-        print(f"[WARN] No metrics tables found, so no {filename} written")
-        return None
-
-    path = os.path.join(out_dir, filename)
-    try:
-        with open(path, "w") as f:
-            f.write(f"{SEP}\nALL METRICS\n{SEP}\n")
-            for line in info:
-                f.write(line + "\n")
-            f.write(f"{SEP}\n\n")
-            f.write("\n\n".join(blocks) + "\n")
-    except OSError as e:
-        print(f"[WARN] Could not write {path}: {e}")
-        return None
-
-    print(f"[INFO] {len(blocks)} metrics table(s) gathered in {path}")
-    return path
-
-
-def format_duration(seconds):
-    minutes, secs = divmod(int(seconds), 60)
-    if minutes:
-        return f"{minutes}m{secs:02d}s"
-    return f"{seconds:.1f}s"
-
-
 def print_summary(results, total_elapsed):
+    """The pass and fail table, in the order the tests were listed. Returns
+    how many failed."""
     print("\n" + SEP)
     print("BENCHMARK SUMMARY")
     print(SEP)
@@ -299,31 +339,46 @@ def print_summary(results, total_elapsed):
 
 
 def main():
+    """Run the batch and gather its metrics tables. Returns the exit code:
+    1 when a test failed, 2 when the batch could not start."""
+    runner = find_runner()
+    if runner is None:
+        print(f"[ERROR] {RUNNER_NAME} not found next to this script or in the "
+              f"current directory.", file=sys.stderr)
+        return 2
+    driver = load_runner(runner)
+
     parser = argparse.ArgumentParser(
         description="Run every benchmark in a folder through run_gem5.py.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"Templates (any file with '{TEMPLATE_MARKER}' in its name) "
-               f"are skipped.\nWith no folder given, {DEFAULT_TESTS_DIR}/ is "
-               f"used, relative to the gem5 root.\n"
+               f"are skipped.\nWith no folder given, the first of "
+               f"{', '.join(d + '/' for d in DEFAULT_TESTS_DIRS)} found is "
+               f"used,\nrelative to the gem5 root and then to this "
+               f"repository.\n"
                f"\n"
                f"Any flag this script does not define is passed on to the "
                f"configuration,\nthrough run_gem5.py and the same for every "
                f"test in the batch:\n"
                f"\n"
-               f"  run_all_gem5_benchmarks.py gem5_config_CVA6.py "
-               f"--no-fill-phase\n"
+               f"  run_all_gem5_benchmarks.py my_config.py "
+               f"--some-config-flag\n"
                f"\n"
                f"Put them after a '--' when a flag takes a value or shares a "
                f"name with\none of ours:\n"
                f"\n"
-               f"  run_all_gem5_benchmarks.py gem5_config_CVA6.py -- "
-               f"--no-fill-phase")
+               f"  run_all_gem5_benchmarks.py my_config.py -- "
+               f"--some-config-flag 4")
     parser.add_argument("config_file",
                         help="gem5 configuration script (.py) passed to "
-                             "run_gem5.py")
-    parser.add_argument("folder", nargs="?", default=DEFAULT_TESTS_DIR,
-                        help=f"Folder holding the tests. "
-                             f"Defaults to {DEFAULT_TESTS_DIR}/")
+                             "run_gem5.py, resolved the way run_gem5.py "
+                             "resolves it")
+    parser.add_argument("folder", nargs="?", default=None,
+                        help="Folder holding the tests, relative to the gem5 "
+                             "root and then to this repository. Defaults to "
+                             "the first of "
+                             + ", ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
+                             + " that exists")
     parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
                         help=f"How many tests to run at a time. Defaults to "
                              f"{DEFAULT_JOBS} here. gem5 is single-threaded, "
@@ -336,10 +391,12 @@ def main():
     parser.add_argument("--no-trace", action="store_true",
                         help="Forwarded to run_gem5.py: no debug trace, "
                              "metrics only")
-    parser.add_argument("--suite", choices=["config", "viewer"], default=None,
+    parser.add_argument("--suite", choices=sorted(driver.OVERHEAD_SUITES),
+                        default=None,
                         help="Forwarded to run_gem5.py: which overhead table "
                              "to subtract")
-    parser.add_argument("--variant", choices=["patch", "stock"], default=None,
+    parser.add_argument("--variant", choices=sorted(driver.GEM5_BUILDS),
+                        default=None,
                         help="Forwarded to run_gem5.py: which build to run "
                              "and whose overhead profile to subtract")
     parser.add_argument("--build", default=None, metavar="NAME",
@@ -364,8 +421,9 @@ def main():
     if stray:
         print(f"[ERROR] Unrecognised argument(s): {' '.join(stray)}. "
               f"Flags for the configuration are passed straight through, "
-              f"anything that takes a value goes after a '--'.")
-        sys.exit(2)
+              f"anything that takes a value goes after a '--'.",
+              file=sys.stderr)
+        return 2
     config_args = unrecognised + after_separator
 
     # Keep our own output interleaved correctly with each run_gem5.py run.
@@ -374,25 +432,25 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
 
-    args.config_file = resolve_config(args.config_file)
+    resolve_input = driver.resolve_input
+    args.config_file = resolve_input(args.config_file)
     if not os.path.isfile(args.config_file):
-        print(f"[ERROR] The configuration file '{args.config_file}' does not "
-              f"exist")
-        sys.exit(2)
+        print(f"[ERROR] Configuration not found: {args.config_file}",
+              file=sys.stderr)
+        return 2
 
     # run_gem5.py resolves the gem5 root from the cwd, so this has to be run
     # from there. Say so now instead of failing later on a missing binary.
     if not find_gem5_builds():
         print(f"[ERROR] No built gem5 found under build/ in {os.getcwd()}. "
-              f"Run this from the gem5 root.")
-        sys.exit(2)
+              f"Run this from the gem5 root.", file=sys.stderr)
+        return 2
 
-    folder = os.path.abspath(args.folder)
+    folder = find_tests_dir(args.folder, resolve_input)
     if not os.path.isdir(folder):
-        print(f"[ERROR] The folder {folder} does not exist")
-        sys.exit(2)
+        print(f"[ERROR] Folder not found: {folder}", file=sys.stderr)
+        return 2
 
-    runner = find_runner()
     tests, templates = discover(folder, args.recursive)
 
     print(SEP)
@@ -415,8 +473,8 @@ def main():
 
     if not tests:
         print(f"[ERROR] No tests found in {folder}. Looked for: " +
-              ", ".join(sorted(SOURCE_EXTS)))
-        sys.exit(2)
+              ", ".join(sorted(SOURCE_EXTS)), file=sys.stderr)
+        return 2
 
     print(f"[INFO] {len(tests)} test(s) to run:")
     for path in tests:
@@ -440,11 +498,14 @@ def main():
     batch_start = time.time()
 
     def run_one(index, path):
+        """Run one test through the driver and collect or keep its output."""
         if stop.is_set():
             return
         name = os.path.basename(path)
         test_name = os.path.splitext(name)[0]
-        job_gem5_out, job_results = job_dirs(runner, test_name)
+        # Prefixed, since a plain run_gem5.py run leaves its binary in
+        # results/m5out/ under the bare test name.
+        job_gem5_out, job_results = job_dirs(f"batch_{test_name}")
         # Anything left from an earlier batch would otherwise be collected.
         discard_run(job_gem5_out, job_results)
 
@@ -467,12 +528,19 @@ def main():
             cmd.extend(["--"] + config_args)
 
         start = time.time()
+        interrupted = False
         if jobs == 1:
-            # Serial: let the run print as it goes.
+            # Serial, so the run prints straight through as it goes.
             print("\n" + SEP)
             print(f"[{index}/{len(tests)}] {name}")
             print(SEP + "\n")
-            code = subprocess.run(cmd).returncode
+            try:
+                code = subprocess.run(cmd).returncode
+            except KeyboardInterrupt:
+                # Reported as failed with the shell's code for an interrupt,
+                # and its output kept, like any other failed run.
+                code, interrupted = 130, True
+                stop.set()
             output = None
         else:
             done = subprocess.run(cmd, capture_output=True, text=True)
@@ -485,13 +553,17 @@ def main():
                 print(f"[{index}/{len(tests)}] {name}")
                 print(SEP + "\n")
                 print(output, end="" if output.endswith("\n") else "\n")
-            if code != 0:
+            if interrupted:
+                print(f"[WARN] '{name}' was interrupted. Its output is left "
+                      f"in {job_gem5_out}.")
+            elif code != 0:
                 # Leave this one where gem5 put it: its output is what there
                 # is to debug with.
                 print(f"[WARN] '{name}' failed with exit code {code}. Its "
                       f"output is left in {job_gem5_out}, including the whole "
                       f"of gem5's stdout and stderr as "
-                      f"{os.path.splitext(name)[0]}_error.log. Continuing.")
+                      f"{os.path.splitext(name)[0]}_error.log. Continuing "
+                      f"with the rest.")
             else:
                 collected = collect(job_results, out_dir, not args.no_trace)
                 if collected:
@@ -499,6 +571,8 @@ def main():
                           f"{out_dir}")
                 discard_run(job_gem5_out, job_results)
             results.append((index, name, code, elapsed))
+        if interrupted:
+            raise KeyboardInterrupt
 
     stop = threading.Event()
     pool = None
@@ -518,7 +592,8 @@ def main():
     except KeyboardInterrupt:
         stop.set()
         print("\n[WARN] Interrupted. Cancelling the runs that have not "
-              "started. The ones already running finish first.")
+              "started. The ones already running are interrupted and "
+              "reported as failed.")
     finally:
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
