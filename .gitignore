@@ -7,11 +7,13 @@ __pycache__
 docs/CARLA2026/daxpy_validation/daxpy_trace.txt
 docs/CARLA2026/MinorFlow_Final_Submission.zip
 
-# Testing
-tests/*_trace*
+# Generated tracer JSONs, traces and samples. Only the README is committed.
+tests/*
+!tests/README.md
 
-# make_oversized.py output
-oversized*.json
+# make_MinorFlow_oversized.py output, with the side files of a write it
+# did not finish
+oversized*.json*
 
-# Configs from the main thesis repo
+# The CVA6 fork's configurations, linked in by hand
 configs/CVA6
