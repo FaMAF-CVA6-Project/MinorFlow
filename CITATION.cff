@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "MinorFlow"
-abstract: "A browser-based, cycle-by-cycle pipeline visualizer for gem5's MinorCPU, reconstructing the pipeline from gem5 debug traces."
+abstract: "A browser-based, cycle-by-cycle pipeline visualiser for gem5's MinorCPU, reconstructing the pipeline from gem5 debug traces."
 type: software
 authors:
   - family-names: "Nieto"

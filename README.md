@@ -343,4 +343,4 @@ python3 scripts/format_MinorFlow_repo.py --python  # one language
 
 ## Licence
 
-Released under the MIT License. The Springer LaTeX class and BibTeX style in `docs/CARLA2026/latex/` keep Springer's own terms. See [LICENSE](LICENSE).
+Released under the MIT License, see [LICENSE](LICENSE). The Springer LaTeX class and BibTeX style in `docs/CARLA2026/latex/` keep Springer's own terms, as [LICENSE.third-party](docs/CARLA2026/latex/LICENSE.third-party) beside them records.
