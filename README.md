@@ -257,7 +257,7 @@ Inside a container, `scripts/make_MinorFlow_sample.py` turns a JSON made there i
 
 ## Paper
 
-MinorFlow is described in _MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture_, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, submitted to **CARLA 2026**, the Latin America High Performance Computing Conference. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
+MinorFlow is described in _MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture_, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, accepted and presented at **CARLA 2026**, the Latin America High Performance Computing Conference, and awaiting publication in its proceedings, in Springer's _Communications in Computer and Information Science_ series. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
 
 Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in:
 

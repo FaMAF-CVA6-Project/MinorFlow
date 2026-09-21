@@ -8,6 +8,8 @@ authors:
     given-names: "Manuel"
     affiliation: "FaMAF, Universidad Nacional de Córdoba"
     orcid: "https://orcid.org/0009-0007-3893-5628"
+version: "1.0.0"
+date-released: "2026-09-21"
 license: MIT
 repository-code: "https://github.com/FaMAF-CVA6-Project/MinorFlow"
 url: "https://github.com/FaMAF-CVA6-Project/MinorFlow"
@@ -26,8 +28,10 @@ references:
     conference:
       name: "CARLA 2026 - Latin America High Performance Computing Conference"
     notes: >-
-      Submitted to CARLA 2026, under review. Paper sources, figures and
-      validation data are in docs/CARLA2026.
+      Accepted and presented at CARLA 2026, awaiting publication in its
+      proceedings, in Springer's Communications in Computer and Information
+      Science series. Paper sources, figures and validation data are in
+      docs/CARLA2026.
     authors:
       - family-names: "Nieto"
         given-names: "Manuel"
