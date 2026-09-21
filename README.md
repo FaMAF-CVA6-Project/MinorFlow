@@ -2,7 +2,7 @@
 
 A browser-based pipeline visualiser for gem5's MinorCPU. It reconstructs the pipeline cycle by cycle from a gem5 debug trace and draws every instruction that reached Execute as a row, so you can see exactly where cycles are being lost.
 
-![MinorFlow rendering the MinorCPU pipeline](docs/MinorFlow_intro.png)
+![MinorFlow loading its daxpy sample, zooming into the MinorCPU pipeline, and showing forwarding and an instruction's timeline](docs/MinorFlow_demo.gif)
 
 ## Motivation
 
