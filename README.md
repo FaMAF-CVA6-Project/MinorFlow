@@ -259,16 +259,17 @@ Inside a container, `scripts/make_MinorFlow_sample.py` turns a JSON made there i
 
 MinorFlow is described in _MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture_, by Manuel Nieto, Francisco Cortez Casini, María Delfina Vélez Ibarra and Gonzalo Tomás Vodanovic, accepted and presented at **CARLA 2026**, the Latin America High Performance Computing Conference, and awaiting publication in its proceedings, in Springer's _Communications in Computer and Information Science_ series. It motivates the tool from the gap between the textbook five-stage pipeline and what gem5 actually reports, describes the tracer and the viewer, and validates the timeline against gem5's own `stats.txt` on daxpy.
 
-Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in:
+Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in, with the talk that presented it:
 
-| Path                                                                           | Contents                                                                                 |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper                                                                      |
-| `latex/`                                                                       | LaTeX sources, bibliography and LNCS style files                                         |
-| `images/`                                                                      | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies    |
-| `gem5_config_Reference_Core.py`                                                | The gem5 configuration of the Reference Core the paper measures                          |
-| `daxpy_validation/`                                                            | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table |
-| `MinorFlow.html`, `MinorFlow_tracer.py`, `run_gem5.py`                         | The viewer, the tracer and the run driver as submitted                                   |
+| Path                                                                           | Contents                                                                                                |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper                                                                                     |
+| `latex/`                                                                       | LaTeX sources, bibliography and LNCS style files                                                        |
+| `images/`                                                                      | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies                   |
+| `gem5_config_Reference_Core.py`                                                | The gem5 configuration of the Reference Core the paper measures                                         |
+| `daxpy_validation/`                                                            | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table                |
+| `MinorFlow.html`, `MinorFlow_tracer.py`, `run_gem5.py`                         | The viewer, the tracer and the run driver as submitted                                                  |
+| `slides/`                                                                      | The talk at RV-CONVERGE, the CARLA 2026 workshop on RISC-V, on 22 September 2026, as HTML, PDF and PPTX |
 
 The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 1 in the paper: 100 MHz, a 16 KiB 4-way L1I and a 32 KiB 8-way L1D at one-cycle hit, a 1024-entry local branch predictor with a 256-entry BTB and a 16-entry RAS. [configs/gem5_config_Reference_Core.py](configs/gem5_config_Reference_Core.py) is the working copy, with the same parameters. Run it the same way as any other config:
 
