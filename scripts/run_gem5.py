@@ -143,7 +143,7 @@ OVERHEAD_SUITES = {
                 "dcache_miss":      0,
                 "icache_access":    22,
                 "dcache_access":    0,
-                "branch_pred":      6,
+                "branch_pred":      5,
                 "branch_miss":      3,
             },
             "asm": {
@@ -167,7 +167,7 @@ OVERHEAD_SUITES = {
                 "dcache_miss":      0,
                 "icache_access":    15,
                 "dcache_access":    0,
-                "branch_pred":      4,
+                "branch_pred":      3,
                 "branch_miss":      1,
             },
             "asm": {
@@ -177,7 +177,7 @@ OVERHEAD_SUITES = {
                 "dcache_miss":      0,
                 "icache_access":    15,
                 "dcache_access":    0,
-                "branch_pred":      4,
+                "branch_pred":      3,
                 "branch_miss":      1,
             },
         },
@@ -189,7 +189,7 @@ OVERHEAD_SUITES = {
                 "dcache_miss":      0,
                 "icache_access":    16,
                 "dcache_access":    0,
-                "branch_pred":      5,
+                "branch_pred":      3,
                 "branch_miss":      2,
             },
             "asm": {
@@ -199,7 +199,7 @@ OVERHEAD_SUITES = {
                 "dcache_miss":      0,
                 "icache_access":    12,
                 "dcache_access":    0,
-                "branch_pred":      3,
+                "branch_pred":      2,
                 "branch_miss":      1,
             },
         },
@@ -305,13 +305,8 @@ METRICS_MAP = {
     "dcache_win_trig":   r"l1dcaches\.windowTriggerCycles",
     "icache_win_over":   r"l1icaches\.windowOverlapCycles",
     "dcache_win_over":   r"l1dcaches\.windowOverlapCycles",
-    "bp_look_d_cond":    r"branchPred\.btb\.lookups::DirectCond\b",
-    "bp_look_d_uncond":  r"branchPred\.btb\.lookups::DirectUncond\b",
-    "bp_look_i_cond":    r"branchPred\.btb\.lookups::IndirectCond\b",
-    "bp_look_i_uncond":  r"branchPred\.btb\.lookups::IndirectUncond\b",
-    "bp_look_call_d":    r"branchPred\.btb\.lookups::CallDirect\b",
-    "bp_look_call_i":    r"branchPred\.btb\.lookups::CallIndirect\b",
-    "bp_look_return":    r"branchPred\.btb\.lookups::Return\b",
+    # Committed control-flow instructions, what CVA6's PMU counts.
+    "bp_committed":      r"branchPred\.committed_0::total\b",
     # mispredicted_0, the thread suffix gem5 writes.
     "bp_misp_d_cond":    r"branchPred\.mispredicted_0::DirectCond\b",
     "bp_misp_d_uncond":  r"branchPred\.mispredicted_0::DirectUncond\b",
@@ -344,10 +339,8 @@ CVA6_EXTRA = {
     "dcache_access": ("dcache_preempt", "dcache_win_trig", "dcache_win_over"),
 }
 
-# The seven branch types gem5 keeps a counter for, as METRICS_MAP names them.
-BTB_LOOKUP_KEYS = ("bp_look_d_cond", "bp_look_d_uncond", "bp_look_i_cond",
-                   "bp_look_i_uncond", "bp_look_call_d", "bp_look_call_i",
-                   "bp_look_return")
+# The seven branch types gem5 keeps a mispredict counter for, as METRICS_MAP
+# names them.
 MISPREDICTED_KEYS = ("bp_misp_d_cond", "bp_misp_d_uncond", "bp_misp_i_cond",
                      "bp_misp_i_uncond", "bp_misp_call_d", "bp_misp_call_i",
                      "bp_misp_return")
@@ -753,10 +746,10 @@ def parse_stats(stats_path):
         print("[ERROR] stats.txt not found", file=sys.stderr)
         raise RunFailed()
 
-    # Branches: the seven BTB-lookup buckets summed. The viewer's Branches
-    # count sits at or below this, since Fetch2 also predicts wrong-path
-    # instructions discarded before Execute, which never become records.
-    results["branch_pred"] = sum(results[key] for key in BTB_LOOKUP_KEYS)
+    # Branches: committed control-flow instructions, as CVA6 counts them. BTB
+    # lookups also count wrong-path predictions, 20 to 30 percent more on a
+    # program full of branches, so they are no match for the RTL's figure.
+    results["branch_pred"] = results.get("bp_committed", 0)
 
     # Mispredicted plus unpredicted, over the same seven types.
     results["branch_miss"] = sum(results[key] for key in MISPREDICTED_KEYS)

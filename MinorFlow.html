@@ -2223,9 +2223,9 @@
         id: 'metric-branches', label: 'Branches', extraInfoLabel: 'branches', extraInfoRank: 7,
         mechanisms: ['minor_inst'],
         desc: 'Control-flow instructions in the current fetch range, committed and flushed alike. '
-          + 'The number in parentheses, when shown, is the committed subset. At or below '
-          + 'stats.txt\'s BTB lookups, which also count wrong-path predictions discarded before '
-          + 'Execute.',
+          + 'The number in parentheses, when shown, is the committed subset, stats.txt\'s '
+          + 'branchPred.committed and run_gem5.py\'s Branches. The whole count sits at or below '
+          + 'the BTB lookups, which also count wrong-path predictions discarded before Execute.',
       },
       {
         id: 'metric-mispredicted', label: 'Mispredicted', extraInfoLabel: 'mispredicted branches',
