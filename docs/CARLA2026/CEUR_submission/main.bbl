@@ -1,0 +1,186 @@
+\begin{thebibliography}{21}
+\expandafter\ifx\csname natexlab\endcsname\relax\def\natexlab#1{#1}\fi
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\href}[2]{#2}
+\providecommand{\path}[1]{#1}
+\providecommand{\DOIprefix}{doi:}
+\providecommand{\ArXivprefix}{arXiv:}
+\providecommand{\URLprefix}{URL: }
+\providecommand{\Pubmedprefix}{pmid:}
+\providecommand{\doi}[1]{\href{http://dx.doi.org/#1}{\path{#1}}}
+\providecommand{\Pubmed}[1]{\href{pmid:#1}{\path{#1}}}
+\providecommand{\bibinfo}[2]{#2}
+\ifx\xfnm\relax \def\xfnm[#1]{\unskip,\space#1}\fi
+%Type = Article
+\bibitem[{Dongarra et~al.(2011)Dongarra, Beckman, Moore, Aerts, Aloisio, Andre,
+  Barkai, Berthou, Boku, Braunschweig et~al.}]{dongarra2011international}
+\bibinfo{author}{J.~Dongarra}, \bibinfo{author}{P.~Beckman},
+  \bibinfo{author}{T.~Moore}, \bibinfo{author}{P.~Aerts},
+  \bibinfo{author}{G.~Aloisio}, \bibinfo{author}{J.-C. Andre},
+  \bibinfo{author}{D.~Barkai}, \bibinfo{author}{J.-Y. Berthou},
+  \bibinfo{author}{T.~Boku}, \bibinfo{author}{B.~Braunschweig}, et~al.,
+\newblock \bibinfo{title}{The international exascale software project roadmap},
+\newblock \bibinfo{journal}{The international journal of high performance
+  computing applications} \bibinfo{volume}{25} (\bibinfo{year}{2011})
+  \bibinfo{pages}{3--60}.
+%Type = Book
+\bibitem[{Patterson and Hennessy(2020)}]{patterson2020computer}
+\bibinfo{author}{D.~Patterson}, \bibinfo{author}{J.~Hennessy},
+  \bibinfo{title}{Computer Organization and Design RISC-V Edition: The Hardware
+  Software Interface}, The Morgan Kaufmann Series in Computer Architecture and
+  Design, \bibinfo{publisher}{Morgan Kaufmann}, \bibinfo{year}{2020}.
+%Type = Article
+\bibitem[{Binkert et~al.(2011)Binkert, Beckmann, Black, Reinhardt, Saidi, Basu,
+  Hestness, Hower, Krishna, Sardashti et~al.}]{binkert2011gem5}
+\bibinfo{author}{N.~Binkert}, \bibinfo{author}{B.~Beckmann},
+  \bibinfo{author}{G.~Black}, \bibinfo{author}{S.~K. Reinhardt},
+  \bibinfo{author}{A.~Saidi}, \bibinfo{author}{A.~Basu},
+  \bibinfo{author}{J.~Hestness}, \bibinfo{author}{D.~R. Hower},
+  \bibinfo{author}{T.~Krishna}, \bibinfo{author}{S.~Sardashti}, et~al.,
+\newblock \bibinfo{title}{The gem5 simulator},
+\newblock \bibinfo{journal}{ACM SIGARCH computer architecture news}
+  \bibinfo{volume}{39} (\bibinfo{year}{2011}) \bibinfo{pages}{1--7}.
+%Type = Article
+\bibitem[{Yehezkel et~al.(2007)Yehezkel, Ben-Ari, and
+  Dreyfus}]{yehezkel2007contribution}
+\bibinfo{author}{C.~Yehezkel}, \bibinfo{author}{M.~Ben-Ari},
+  \bibinfo{author}{T.~Dreyfus},
+\newblock \bibinfo{title}{The contribution of visualization to learning
+  computer architecture},
+\newblock \bibinfo{journal}{Computer Science Education} \bibinfo{volume}{17}
+  (\bibinfo{year}{2007}) \bibinfo{pages}{117--127}.
+%Type = Inproceedings
+\bibitem[{Yeh et~al.(2023)Yeh, Sterner, Bell, and Cowe}]{yeh2023visualization}
+\bibinfo{author}{T.~Y. Yeh}, \bibinfo{author}{M.~Sterner},
+  \bibinfo{author}{C.~Bell}, \bibinfo{author}{A.~C. Cowe},
+\newblock \bibinfo{title}{Visualization with experiential learning to encourage
+  participation and research in computer architecture},
+\newblock in: \bibinfo{booktitle}{Proceedings of the Workshop on Computer
+  Architecture Education}, \bibinfo{year}{2023}, pp. \bibinfo{pages}{9--16}.
+%Type = Misc
+\bibitem[{{gem5 Project}(2023)}]{minorviewGtkSrc}
+\bibinfo{author}{{gem5 Project}}, \bibinfo{title}{{MinorView} source code:
+  \texttt{blobs.py}},
+  \bibinfo{howpublished}{\url{https://gem5.googlesource.com/public/gem5/+/fbaa164b6a7275760066b62fb863501c67dd2ffe/util/minorview/blobs.py}},
+  \bibinfo{year}{2023}. \bibinfo{note}{Source code, commit
+  fbaa164b6a7275760066b62fb863501c67dd2ffe; accessed July 21, 2026}.
+%Type = Misc
+\bibitem[{{GNOME Developer Documentation}(2026)}]{gnome_pygobject_porting}
+\bibinfo{author}{{GNOME Developer Documentation}}, \bibinfo{title}{Pygobject
+  guide: Porting from static bindings (pygtk)}, \bibinfo{year}{2026}.
+  \URLprefix \url{https://pygobject.gnome.org/guide/porting.html},
+  \bibinfo{note}{accessed: 2026-05-22}.
+%Type = Misc
+\bibitem[{Bardsley(2026)}]{gem5o3cpu}
+\bibinfo{author}{A.~Bardsley}, \bibinfo{title}{{O3 Model}},
+  \bibinfo{howpublished}{\url{https://www.gem5.org/documentation/general_docs/cpu_models/O3CPU}},
+  \bibinfo{year}{2026}. \bibinfo{note}{Accessed: 2026-05-22}.
+%Type = Misc
+\bibitem[{Shioya(2025)}]{shioya2025konata}
+\bibinfo{author}{D.~Shioya}, \bibinfo{title}{{Konata}: An instruction pipeline
+  visualizer for {Onikiri2-Kanata} and {Gem5-O3PipeView} formats},
+  \bibinfo{howpublished}{\url{https://github.com/shioyadan/Konata}},
+  \bibinfo{year}{2025}. \bibinfo{note}{Accessed: 2026-05-22}.
+%Type = Inproceedings
+\bibitem[{Mashimo et~al.(2019)Mashimo, Fujita, Matsuo, Akaki, Fukuda, Koizumi,
+  Kadomoto, Irie, Goshima, Inoue et~al.}]{mashimo2019open}
+\bibinfo{author}{S.~Mashimo}, \bibinfo{author}{A.~Fujita},
+  \bibinfo{author}{R.~Matsuo}, \bibinfo{author}{S.~Akaki},
+  \bibinfo{author}{A.~Fukuda}, \bibinfo{author}{T.~Koizumi},
+  \bibinfo{author}{J.~Kadomoto}, \bibinfo{author}{H.~Irie},
+  \bibinfo{author}{M.~Goshima}, \bibinfo{author}{K.~Inoue}, et~al.,
+\newblock \bibinfo{title}{An open source fpga-optimized out-of-order risc-v
+  soft processor},
+\newblock in: \bibinfo{booktitle}{2019 International Conference on
+  Field-Programmable Technology (ICFPT)}, \bibinfo{organization}{IEEE},
+  \bibinfo{year}{2019}, pp. \bibinfo{pages}{63--71}.
+%Type = Misc
+\bibitem[{{SpinalHDL}(2021)}]{NaxRiscv}
+\bibinfo{author}{{SpinalHDL}}, \bibinfo{title}{{NaxRiscv} core documentation},
+  \bibinfo{howpublished}{\url{https://github.com/SpinalHDL/naxriscv_doc}},
+  \bibinfo{year}{2021}. \bibinfo{note}{Accessed: 2026-05-23}.
+%Type = Inproceedings
+\bibitem[{Petersen(2021)}]{petersen2021ripes}
+\bibinfo{author}{M.~B. Petersen},
+\newblock \bibinfo{title}{Ripes: A visual computer architecture simulator},
+\newblock in: \bibinfo{booktitle}{2021 ACM/IEEE Workshop on Computer
+  Architecture Education (WCAE)}, \bibinfo{organization}{IEEE},
+  \bibinfo{year}{2021}, pp. \bibinfo{pages}{1--8}.
+%Type = Inproceedings
+\bibitem[{Giorgi and Mariotti(2019)}]{giorgi2019webrisc}
+\bibinfo{author}{R.~Giorgi}, \bibinfo{author}{G.~Mariotti},
+\newblock \bibinfo{title}{Webrisc-v: A web-based education-oriented risc-v
+  pipeline simulation environment},
+\newblock in: \bibinfo{booktitle}{Proceedings of the workshop on computer
+  architecture education}, \bibinfo{year}{2019}, pp. \bibinfo{pages}{1--6}.
+%Type = Article
+\bibitem[{Giorgi and Mariotti(2025)}]{giorgi2025webrisc}
+\bibinfo{author}{R.~Giorgi}, \bibinfo{author}{G.~Mariotti},
+\newblock \bibinfo{title}{Webrisc-v: A 64-bit risc-v pipeline simulator for
+  computer architecture classes},
+\newblock \bibinfo{journal}{arXiv preprint arXiv:2504.03722}
+  (\bibinfo{year}{2025}).
+%Type = Article
+\bibitem[{Bandara et~al.(2019)Bandara, Ehret, Kava, and
+  Kinsy}]{bandara2019brisc}
+\bibinfo{author}{S.~Bandara}, \bibinfo{author}{A.~Ehret},
+  \bibinfo{author}{D.~Kava}, \bibinfo{author}{M.~A. Kinsy},
+\newblock \bibinfo{title}{Brisc-v: An open-source architecture design space
+  exploration toolbox},
+\newblock \bibinfo{journal}{arXiv preprint arXiv:1908.09992}
+  (\bibinfo{year}{2019}).
+%Type = Inproceedings
+\bibitem[{Krim and Porquet-Lupine(2025)}]{krim2025vrv}
+\bibinfo{author}{N.~Krim}, \bibinfo{author}{J.~Porquet-Lupine},
+\newblock \bibinfo{title}{Vrv: A versatile risc-v simulator for education},
+\newblock in: \bibinfo{booktitle}{Proceedings of the 56th ACM Technical
+  Symposium on Computer Science Education V. 2}, \bibinfo{year}{2025}, pp.
+  \bibinfo{pages}{1505--1506}.
+%Type = Inproceedings
+\bibitem[{Jaros et~al.(2024)Jaros, Majer, Horky, and Vavra}]{jaros2024web}
+\bibinfo{author}{J.~Jaros}, \bibinfo{author}{M.~Majer},
+  \bibinfo{author}{J.~Horky}, \bibinfo{author}{J.~Vavra},
+\newblock \bibinfo{title}{Web-based simulator of superscalar risc-v
+  processors},
+\newblock in: \bibinfo{booktitle}{SC24-W: Workshops of the International
+  Conference for High Performance Computing, Networking, Storage and Analysis},
+  \bibinfo{organization}{IEEE}, \bibinfo{year}{2024}, pp.
+  \bibinfo{pages}{1676--1684}.
+%Type = Inproceedings
+\bibitem[{Giorgi(2025)}]{giorgi2025freess}
+\bibinfo{author}{R.~Giorgi},
+\newblock \bibinfo{title}{Freess: An educational simulator of a risc-v-inspired
+  superscalar processor based on tomasulo's algorithm},
+\newblock in: \bibinfo{booktitle}{Proceedings of the Workshop on Computer
+  Architecture Education}, \bibinfo{year}{2025}, pp. \bibinfo{pages}{1--8}.
+%Type = Article
+\bibitem[{Gro{\ss}e et~al.(2026)Gro{\ss}e, Reitinger, and
+  Klemmer}]{grosse2026sonicrv}
+\bibinfo{author}{D.~Gro{\ss}e}, \bibinfo{author}{S.~Reitinger},
+  \bibinfo{author}{L.~Klemmer},
+\newblock \bibinfo{title}{Sonicrv: An educational platform for web-based
+  simulation and visualization of risc-v processor architectures},
+\newblock \bibinfo{journal}{IEEE Access}  (\bibinfo{year}{2026}).
+%Type = Article
+\bibitem[{Zaruba and Benini(2019)}]{zaruba2019cost}
+\bibinfo{author}{F.~Zaruba}, \bibinfo{author}{L.~Benini},
+\newblock \bibinfo{title}{The cost of application-class processing: Energy and
+  performance analysis of a linux-ready 1.7-ghz 64-bit risc-v core in 22-nm
+  fdsoi technology},
+\newblock \bibinfo{journal}{IEEE Transactions on Very Large Scale Integration
+  (VLSI) Systems} \bibinfo{volume}{27} (\bibinfo{year}{2019})
+  \bibinfo{pages}{2629--2640}.
+%Type = Techreport
+\bibitem[{Asanovi{\'c} et~al.(2016)Asanovi{\'c}, Avizienis, Bachrach, Beamer,
+  Biancolin, Celio, Cook, Dabbelt, Hauser, Izraelevitz
+  et~al.}]{asanovic2016rocket}
+\bibinfo{author}{K.~Asanovi{\'c}}, \bibinfo{author}{R.~Avizienis},
+  \bibinfo{author}{J.~Bachrach}, \bibinfo{author}{S.~Beamer},
+  \bibinfo{author}{D.~Biancolin}, \bibinfo{author}{C.~Celio},
+  \bibinfo{author}{H.~Cook}, \bibinfo{author}{D.~Dabbelt},
+  \bibinfo{author}{J.~Hauser}, \bibinfo{author}{A.~Izraelevitz}, et~al.,
+  \bibinfo{title}{The rocket chip generator}, \bibinfo{type}{Technical Report}
+  \bibinfo{number}{UCB/EECS-2016-17}, EECS Department, University of
+  California, Berkeley, \bibinfo{year}{2016}.
+
+\end{thebibliography}

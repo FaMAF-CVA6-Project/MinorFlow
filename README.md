@@ -267,15 +267,16 @@ MinorFlow is described in _MinorFlow: A gem5 Pipeline Visualizer for Teaching Co
 
 Everything behind the paper lives in [docs/CARLA2026/](docs/CARLA2026/), frozen at the state it was submitted in, with the talk that presented it:
 
-| Path                                                                           | Contents                                                                                                |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper                                                                                     |
-| `latex/`                                                                       | LaTeX sources, bibliography and LNCS style files                                                        |
-| `images/`                                                                      | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies                   |
-| `gem5_config_Reference_Core.py`                                                | The gem5 configuration of the Reference Core the paper measures                                         |
-| `daxpy_validation/`                                                            | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table                |
-| `MinorFlow.html`, `MinorFlow_tracer.py`, `run_gem5.py`                         | The viewer, the tracer and the run driver as submitted                                                  |
-| `slides/`                                                                      | The talk at RV-CONVERGE, the CARLA 2026 workshop on RISC-V, on 22 September 2026, as HTML, PDF and PPTX |
+| Path                                                                           | Contents                                                                                                                                  |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture.pdf` | The submitted paper                                                                                                                       |
+| `latex/`                                                                       | LaTeX sources, bibliography and LNCS style files                                                                                          |
+| `images/`                                                                      | Figures: the pipeline and workflow diagrams, the renderer, and the three case studies                                                     |
+| `gem5_config_Reference_Core.py`                                                | The gem5 configuration of the Reference Core the paper measures                                                                           |
+| `daxpy_validation/`                                                            | The daxpy kernel, its trace-derived JSON and the `stats.txt` behind the validation table                                                  |
+| `MinorFlow.html`, `MinorFlow_tracer.py`, `run_gem5.py`                         | The viewer, the tracer and the run driver as submitted                                                                                    |
+| `slides/`                                                                      | The talk at RV-CONVERGE, the CARLA 2026 workshop on RISC-V, on 22 September 2026, as HTML, PDF and PPTX                                   |
+| `CEUR_submission/`                                                             | The paper in the CEUR-WS template for the Special Publication Chairs: its LaTeX sources, figures, compiled PDF and the zip they asked for |
 
 The Reference Core is the single-issue in-order 64-bit RISC-V MinorCPU of Table 1 in the paper: 100 MHz, a 16 KiB 4-way L1I and a 32 KiB 8-way L1D at one-cycle hit, a 1024-entry local branch predictor with a 256-entry BTB and a 16-entry RAS. [configs/gem5_config_Reference_Core.py](configs/gem5_config_Reference_Core.py) is the working copy, with the same parameters. Run it the same way as any other config:
 
@@ -350,4 +351,4 @@ python3 scripts/format_MinorFlow_repo.py --python  # one language
 
 ## Licence
 
-Released under the MIT License, see [LICENSE](LICENSE). The Springer LaTeX class and BibTeX style in `docs/CARLA2026/latex/` keep Springer's own terms, as [LICENSE.third-party](docs/CARLA2026/latex/LICENSE.third-party) beside them records.
+Released under the MIT License, see [LICENSE](LICENSE). The Springer LaTeX class and BibTeX style in `docs/CARLA2026/latex/` keep Springer's own terms, as [LICENSE.third-party](docs/CARLA2026/latex/LICENSE.third-party) beside them records. CEUR-WS's `ceurart.cls` in `docs/CARLA2026/CEUR_submission/` keeps its LaTeX Project Public License, v1.3c or later, as its header states.
