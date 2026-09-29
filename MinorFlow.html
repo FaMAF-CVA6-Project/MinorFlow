@@ -84,59 +84,59 @@
 
     /* Needs: css-tokens */
 
-    /* The light look, a palette of its own after macOS's: grey chrome, white controls and rows,
-     * near-black text and Apple's system hues. It restates every colour of css-tokens. */
+    /* The light look, a palette of its own after macOS's system greys: grey chrome and rows,
+     * lighter controls and cards, near-black text. It restates every colour of css-tokens. */
     html[data-theme="light"] {
-      --bg: #f2f2f5;
-      --bg2: #eaeaee;
-      --bg3: #ffffff;
-      --bg4: #e0e0e5;
-      --border: rgba(0, 0, 0, 0.08);
-      --border2: rgba(0, 0, 0, 0.14);
+      --bg: #d8d8dd;
+      --bg2: #d6d6db;
+      --bg3: #eaeaee;
+      --bg4: #c7c7cc;
+      --border: rgba(0, 0, 0, 0.10);
+      --border2: rgba(0, 0, 0, 0.17);
       --text: #1d1d1f;
-      --text2: #48484a;
-      --text3: #636366;
-      --text-id: #8e8e93;
-      --text-pc: #5f5e9c;
-      --text-hit: #7a4f00;
-      --accent: #13744f;
-      --warn: #c93400;
-      --bad: #d70015;
-      --compressed: #00788d;
-      --link: #0066cc;
+      --text2: #434346;
+      --text3: #58585c;
+      --text-id: #74747a;
+      --text-pc: #535297;
+      --text-hit: #6e4700;
+      --accent: #006743;
+      --warn: #b21700;
+      --bad: #b60000;
+      --compressed: #006276;
+      --link: #0055b9;
       --link-hover: #004f9e;
-      --link-dim: #6e7a8a;
-      --grip: rgba(0, 122, 255, 0.4);
-      --focus: rgba(0, 122, 255, 0.4);
-      --crosshair: rgba(0, 0, 0, 0.16);
-      --timeline-bg: #ffffff;
-      --scrollbar-thumb: #c7c7cc;
-      --scrollbar-thumb-hover: #aeaeb2;
-      --ruler-bg: #f6f6f8;
-      --label-row: #ffffff;
-      --label-row-alternate: #f6f6f8;
-      --label-row-hit: #fff1c2;
-      --scrim: rgba(0, 0, 0, 0.2);
-      --shadow: rgba(0, 0, 0, 0.12);
-      --timeline-row: #ffffff;
-      --timeline-row-alternate: #f6f6f8;
-      --grid-minor: rgba(0, 0, 0, 0.035);
-      --grid-major: rgba(0, 0, 0, 0.08);
-      --grid-sparse: rgba(0, 0, 0, 0.055);
-      --ruler-tick: #d8d8dc;
-      --ruler-tick-major: #aeaeb2;
-      --ruler-text: #636366;
-      --empty-range: #8e8e93;
-      --op-int: #1e7a34;
-      --op-fp: #0060c0;
-      --op-mem: #9a5a00;
-      --op-branch: #8944ab;
-      --op-flushed: #c0474f;
-      --forward-arrival: #6e7e7e;
-      --stall-ground: #f2f2f5;
-      --stall-label: #636366;
-      --stall-axis: #aeaeb2;
-      --swatch-edge: rgba(0, 0, 0, 0.16);
+      --link-dim: #4e5a69;
+      --grip: rgba(0, 110, 230, 0.45);
+      --focus: rgba(0, 110, 230, 0.45);
+      --crosshair: rgba(0, 0, 0, 0.20);
+      --timeline-bg: #e5e5ea;
+      --scrollbar-thumb: #b3b3b9;
+      --scrollbar-thumb-hover: #9a9aa1;
+      --ruler-bg: #dadadf;
+      --label-row: #e5e5ea;
+      --label-row-alternate: #dfdfe4;
+      --label-row-hit: #efdca0;
+      --scrim: rgba(0, 0, 0, 0.24);
+      --shadow: rgba(0, 0, 0, 0.18);
+      --timeline-row: #e5e5ea;
+      --timeline-row-alternate: #dfdfe4;
+      --grid-minor: rgba(0, 0, 0, 0.04);
+      --grid-major: rgba(0, 0, 0, 0.09);
+      --grid-sparse: rgba(0, 0, 0, 0.065);
+      --ruler-tick: #c3c3c9;
+      --ruler-tick-major: #9e9ea5;
+      --ruler-text: #48484c;
+      --empty-range: #76767c;
+      --op-int: #006822;
+      --op-fp: #0055b4;
+      --op-mem: #874900;
+      --op-branch: #7e39a0;
+      --op-flushed: #a32b38;
+      --forward-arrival: #4d5c5c;
+      --stall-ground: #dadadf;
+      --stall-label: #58585c;
+      --stall-axis: #9e9ea5;
+      --swatch-edge: rgba(0, 0, 0, 0.20);
       color-scheme: light;
     }
 
@@ -2039,13 +2039,15 @@
     const PART_TAG_MIN_W = 12;
     const ARROW_LINE_W = 2.5;
     const ARROW_HEAD = 10;
-    /* A texture covers about a third of the pixels a wash does, so the band
-     * alphas are raised to keep every band equally present. */
-    const HELD_ALPHA = 0.34;
-    const HELD_RULER_ALPHA = 0.55;
-    const STALL_BAND_ALPHA = 0.42;
-    const STALL_BAND_RULER_ALPHA = 0.62;
-    const PC_FIND_ROW_ALPHA = 0.12;
+    /* A texture covers about a third of the pixels a wash does, so the band alphas are raised to
+     * keep every band equally present. The light look draws finer textures in deeper inks. */
+    const BAND_LOOKS = Object.freeze({
+      dark: Object.freeze({ held: 0.34, heldRuler: 0.55, stall: 0.42, stallRuler: 0.62, pcFind: 0.12,
+        line: 1.6 }),
+      light: Object.freeze({ held: 0.4, heldRuler: 0.52, stall: 0.22, stallRuler: 0.38, pcFind: 0.3,
+        line: 1 }),
+    });
+    let BAND_LOOK = BAND_LOOKS.dark;
     const COPY_FLASH_MS = 1200;
     /* How many times the window's resolution a screenshot is saved at. */
     const SCREENSHOT_SCALE = 3;
@@ -2111,63 +2113,64 @@
       icHeld: '80,195,180',
       dcHeld: '210,130,70',
     });
-    /* The light look's own stage colours, not derived from the dark ones: Apple's system hues
-     * laid over white as tints, faint for a wait, soft for a stage and strong for an event. */
+    /* The light look's own stage colours, not derived from the dark ones: Apple's hue angles in
+     * OKLCH at a lightness and chroma per level, opaque on the grey rows, faint for a wait, soft
+     * for a stage and strong for an event. */
     const COL_LIGHT = Object.freeze({
-      preFetchWait: '#eeeefb',
-      preFetchHeld: '#e1e1f8',
-      branchDelay: '#daf1f5',
-      serialiseDelay: '#c2e6f8',
-      bubblePredTaken: 'rgb(175,82,222)',
-      bubbleUnpred: 'rgb(230,170,0)',
-      bubbleMispred: 'rgb(255,149,0)',
-      bubbleIcMiss: 'rgb(255,59,48)',
-      bubbleFlush: 'rgb(48,176,199)',
-      fe1Req: '#b2d7ff',
-      fe1ReqMiss: '#ffc4c1',
-      icStall: '#ffdcda',
-      fe1Resp: '#8ac2ff',
-      hiLineWait: '#e6f2ff',
-      fe1ReqHi: '#c2e6f8',
-      fe1ReqMissHi: '#ffc0cc',
-      icStallHi: '#ffd9e0',
-      fe1RespHi: '#a1d9f4',
-      fe2: '#d1e7ff',
-      bpCorrect: '#6bc4ed',
-      fe2Buf: '#e6f2ff',
-      decBuf: '#f7eefc',
-      dec: '#cdccf3',
-      transit: '#eaf7f9',
-      exBuf: '#e6f2ff',
-      hazard: '#ffeaee',
-      fwd: 'rgba(201,52,0,0.85)',
-      fwdHead: 'rgba(201,52,0,1.0)',
-      flushedFwd: '#c8424f',
-      int: '#c2eecd',
-      fp: '#c1e7ee',
-      vec: '#dddddf',
-      atomic: '#ffc0cc',
-      mem: '#e3dacf',
-      branch: '#e7cbf5',
-      bpMispred: '#ff3b30',
-      bpUnpred: '#ffb347',
-      lsqWait: '#f1e0f9',
-      memReq: '#ffe88a',
-      dcMiss: '#ffa5a0',
-      dcStall: '#ffdcda',
-      rasPush: '#b2eeec',
-      rasPop: '#c2e6f8',
-      rasDrop: '#ffce8a',
-      storeCollision: '#daaff0',
-      collisionReplay: '#d4c6b5',
-      storeBuffer: '#ffdfb2',
-      coWait: '#daf1f5',
-      co: '#a2e5b3',
-      flushed: '#ffebea',
-      pcFind: '255,204,0',
-      stallBand: '88,86,214',
-      icHeld: '0,199,190',
-      dcHeld: '255,149,0',
+      preFetchWait: '#c8cce7',
+      preFetchHeld: '#bbc0e9',
+      branchDelay: '#9dd1db',
+      serialiseDelay: '#74c1e5',
+      bubblePredTaken: 'rgb(150,70,196)',
+      bubbleUnpred: 'rgb(212,160,32)',
+      bubbleMispred: 'rgb(226,128,0)',
+      bubbleIcMiss: 'rgb(224,56,46)',
+      bubbleFlush: 'rgb(40,150,172)',
+      fe1Req: '#91b8f1',
+      fe1ReqMiss: '#eba093',
+      icStall: '#eab9b1',
+      fe1Resp: '#76a6ed',
+      hiLineWait: '#c2d2ea',
+      fe1ReqHi: '#74c1e5',
+      fe1ReqMissHi: '#e89db1',
+      icStallHi: '#e8b8c4',
+      fe1RespHi: '#48b2df',
+      fe2: '#b0c8ed',
+      bpCorrect: '#0aa1d4',
+      fe2Buf: '#c2d2ea',
+      decBuf: '#d9cae4',
+      dec: '#aaa1e3',
+      transit: '#b7d8de',
+      exBuf: '#c2d2ea',
+      hazard: '#e8c7cf',
+      fwd: 'rgba(186,52,10,0.85)',
+      fwdHead: 'rgba(186,52,10,1.0)',
+      flushedFwd: '#b23a44',
+      int: '#93cb98',
+      fp: '#6dc5d5',
+      vec: '#b5b5ba',
+      atomic: '#e89db1',
+      mem: '#c8ae90',
+      branch: '#cd95d6',
+      bpMispred: '#e5675a',
+      bpUnpred: '#d98939',
+      lsqWait: '#d3bce3',
+      memReq: '#d7b856',
+      dcMiss: '#e48879',
+      dcStall: '#eab9b1',
+      rasPush: '#74cdc3',
+      rasPop: '#74c1e5',
+      rasDrop: '#e49e5e',
+      storeCollision: '#bd8fd9',
+      collisionReplay: '#bc9b76',
+      storeBuffer: '#ecb483',
+      coWait: '#9dd1db',
+      co: '#5cb174',
+      flushed: '#e7d4d3',
+      pcFind: '255,184,0',
+      stallBand: '72,70,170',
+      icHeld: '0,122,132',
+      dcHeld: '178,98,0',
     });
     let COL = COL_DARK;
 
@@ -2494,6 +2497,7 @@
 
     /* The tables above hold stage colours, so a change of theme builds them again. */
     function rebuildThemedTables() {
+      BAND_LOOK = BAND_LOOKS[currentTheme()];
       BUBBLE_KINDS = bubbleKinds();
       BUBBLE_IC_MISS = bubbleIcMiss();
       LEGEND_ENTRIES = legendEntries();
@@ -2944,9 +2948,10 @@
      * redraw paints two contexts. */
     const hatchTiles = new Map();
 
-    /* kind is 'dot', 'fwd' or 'back'. The strokes run past the tile edge so the repeat joins. */
-    function hatchStyle(ctx, rgb, alpha, kind) {
-      const key = rgb + '@' + alpha + '@' + kind;
+    /* kind is 'dot', 'fwd' or 'back', and line the strokes' width. The strokes run past the tile
+     * edge so the repeat joins. */
+    function hatchStyle(ctx, rgb, alpha, kind, line = 1.6) {
+      const key = rgb + '@' + alpha + '@' + kind + '@' + line;
       let tile = hatchTiles.get(key);
       if (!tile) {
         tile = document.createElement('canvas');
@@ -2955,7 +2960,7 @@
         const g = tile.getContext('2d');
         g.strokeStyle = `rgba(${rgb},${alpha})`;
         g.fillStyle = `rgba(${rgb},${alpha})`;
-        g.lineWidth = 1.6;
+        g.lineWidth = line;
         if (kind === 'dot') {
           g.fillRect(1, 1, 2, 2);
           g.fillRect(4, 4, 2, 2);
@@ -3057,8 +3062,8 @@
 
     /* On light, text in a stage's colour is that hue darkened in OKLab until it reads on its
      * ground, as a calendar writes an event in its own colour. A grey stays grey. */
-    const HUE_INK_LIGHTNESS = 0.42;
-    const HUE_INK_CHROMA = 0.13;
+    const HUE_INK_LIGHTNESS = 0.4;
+    const HUE_INK_CHROMA = 0.12;
     const hueInks = new Map();
 
     function hueInk(colour, ground) {
@@ -3119,7 +3124,7 @@
     const TAG_ALPHA = Object.freeze({ cell: 0.55, strip: 0.85, part: 0.92 });
     const TAG_INK_DARK = '20,20,22';
     const TAG_DARK_ALPHA_MIN = 0.82;
-    const TAG_WHITE_BELOW = 0.6;
+    const TAG_WHITE_BELOW = 0.58;
     const tagInks = new Map();
 
     function relativeLuminance(rgb) {
@@ -3162,7 +3167,7 @@
     }
 
     /* Over a band the rows go this translucent, so the band stays visible beneath. */
-    const BANDED_ROW_ALPHA = 0.55;
+    const BANDED_ROW_ALPHA = Object.freeze({ dark: 0.55, light: 0.6 });
 
     /* The inks both pages draw with, read from the stylesheet in the current look. */
     function commonInks() {
@@ -3171,8 +3176,8 @@
       return {
         rowEven: rowAlternate,
         rowOdd: row,
-        rowEvenBanded: withAlpha(rowAlternate, BANDED_ROW_ALPHA),
-        rowOddBanded: withAlpha(row, BANDED_ROW_ALPHA),
+        rowEvenBanded: withAlpha(rowAlternate, BANDED_ROW_ALPHA[currentTheme()]),
+        rowOddBanded: withAlpha(row, BANDED_ROW_ALPHA[currentTheme()]),
         belowRows: cssToken('--bg'),
         gridMinor: cssToken('--grid-minor'),
         gridMajor: cssToken('--grid-major'),
@@ -6764,8 +6769,8 @@
       const rctx = rulerCanvas.getContext('2d');
       const paintHeld = (spans, rgb, kind) => {
         if (!spans) return;
-        ctx.fillStyle = hatchStyle(ctx, rgb, HELD_ALPHA, kind);
-        rctx.fillStyle = hatchStyle(rctx, rgb, HELD_RULER_ALPHA, kind);
+        ctx.fillStyle = hatchStyle(ctx, rgb, BAND_LOOK.held, kind, BAND_LOOK.line);
+        rctx.fillStyle = hatchStyle(rctx, rgb, BAND_LOOK.heldRuler, kind, BAND_LOOK.line);
         for (const [start, end] of spans) {
           const lo = Math.max(start, first), hi = Math.min(end, last + 1);
           if (hi <= lo) continue;
@@ -6780,8 +6785,8 @@
       paintHeld(icHeld, COL.icHeld, 'fwd');
       const stalls = stallBandBox.checked && stallSets ? stallSets.totalStall : null;
       if (stalls && stalls.size) {
-        ctx.fillStyle = hatchStyle(ctx, COL.stallBand, STALL_BAND_ALPHA, 'dot');
-        rctx.fillStyle = hatchStyle(rctx, COL.stallBand, STALL_BAND_RULER_ALPHA, 'dot');
+        ctx.fillStyle = hatchStyle(ctx, COL.stallBand, BAND_LOOK.stall, 'dot', BAND_LOOK.line);
+        rctx.fillStyle = hatchStyle(rctx, COL.stallBand, BAND_LOOK.stallRuler, 'dot', BAND_LOOK.line);
         for (let cycle = first; cycle <= last; cycle++) {
           if (!stalls.has(cycle)) continue;
           ctx.fillRect((cycle - first) * cellW, 0, cellW, height);
@@ -6809,7 +6814,7 @@
           : (even ? INK.rowEven : INK.rowOdd);
         ctx.fillRect(0, y, width, rowH);
         if (row === pcFind.highlightRow) {
-          ctx.fillStyle = `rgba(${COL.pcFind},${PC_FIND_ROW_ALPHA})`;
+          ctx.fillStyle = `rgba(${COL.pcFind},${BAND_LOOK.pcFind})`;
           ctx.fillRect(0, y, width, rowH);
         }
         drawBars(ctx, rows[row], y, first, width, rowH);
