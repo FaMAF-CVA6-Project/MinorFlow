@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Remove everything the gem5 run scripts generate, which is all of
-results/: m5out/, run/, batch/, the sweeps and parity/. Only the fixed names
-below are removed: those folders under each search root, and every
-__pycache__ below a root, which a container collects from scons as well.
+results/: m5out/, run/, batch/, the sweeps, parity/ and overhead/. Only the
+fixed names below are removed: those folders under each search root, and
+every __pycache__ below a root, which a container collects from scons as
+well.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
 
@@ -17,8 +18,8 @@ import shutil
 import sys
 
 # Every folder a run writes, under results/ at the top of each search root,
-# which is where the runners put them. The last two come from the CVA6 fork's
-# own scripts, which share a gem5 tree with these.
+# which is where the runners put them. sweep_gem5_config and parity come from
+# the CVA6 fork's own scripts, which share a gem5 tree with these.
 ROOT_DIRS = {
     "results/m5out":             "run_gem5.py: gem5's output, stats, binary",
     "results/run":               "run_gem5.py: the files worth keeping",
@@ -161,7 +162,7 @@ def main():
                              "run given --out-dir or --gem5-out-dir")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Delete without asking for confirmation")
-    parser.add_argument("--dry-run", action="store_true",
+    parser.add_argument("-n", "--dry-run", action="store_true",
                         help="List what would be deleted and stop")
     args = parser.parse_args()
 

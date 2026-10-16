@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run the MinorFlow configuration sweep. Each TEST entry runs against the
 workloads it names, outputs carry a .config<N> tag, and every metrics table is
-gathered into one metrics_<config>_<variant>.txt. Run it from the gem5 root:
+gathered into one metrics file named after the configuration, the selection
+and the variant. Run it from the gem5 root:
 
     python3 scripts/run_MinorFlow_sweep.py --configs 1,4-6 --dry-run
 """
@@ -42,8 +43,10 @@ GEM5_OUT_DIR = os.path.join("results", "m5out")
 # writes a trace, so memory and disk bind before cores do.
 DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 
-# How a collected file and a config copy are labelled.
+# How a collected file and a config copy are labelled, and the name a run's
+# working folders carry under results/m5out/.
 LABEL = "config"
+SWEEP_NAME = "sweep_MinorFlow"
 
 # Extensions tried when turning a workload name into a file, in this order.
 EXT_PRIORITY = [".c", ".S", ".s", ".asm", ".sx"]
@@ -193,12 +196,14 @@ def driver_results_dir():
     return os.path.join("results", "run")
 
 
-def job_dirs(label):
-    """The private folders one run works in. Each job gets its own, so
-    concurrent runs cannot overwrite each other's stats.txt, trace or
-    binary."""
-    return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(), label))
+def job_dirs(tool, label):
+    """The private folders one run works in, named after the tool, this
+    process and the run. Neither the jobs of one batch nor two tools running
+    at once in one gem5 root can then overwrite or delete each other's
+    stats.txt, trace or binary."""
+    name = f"{tool}_{os.getpid()}_{label}"
+    return (os.path.join(GEM5_OUT_DIR, name),
+            os.path.join(driver_results_dir(), name))
 
 
 def discard_run(job_gem5_out, job_results):
@@ -241,6 +246,136 @@ def split_own_args(argv):
 
 class SweepRefused(Exception):
     """The sweep cannot start, for the reason in the message."""
+
+
+def resolve_all(table):
+    """The 'all' workload set: every workload the table names explicitly."""
+    named = []
+    for _, workloads in table.values():
+        for workload in workloads:
+            if workload.lower() != "all" and workload not in named:
+                named.append(workload)
+    return sorted(named)
+
+
+# SHARED BEGIN py-sweep-common
+
+# Needs: os, EXT_PRIORITY, SEP, SweepRefused, py-run-helpers
+
+
+def parse_config_selection(spec, table, groups=None, default=None):
+    """Parse '1,4-6' into a sorted list of configuration ids. groups maps a
+    name to the ids it stands for, and an empty spec selects default, or
+    every id. Raises SweepRefused on a malformed, backward or unknown id."""
+    groups = groups or {}
+    if not spec:
+        return sorted(table if default is None else default)
+
+    selected = set()
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if chunk.lower() in groups:
+            selected.update(groups[chunk.lower()])
+            continue
+        low, dash, high = chunk.partition("-")
+        try:
+            first, last = int(low), int(high if dash else low)
+        except ValueError:
+            raise SweepRefused(f"Bad configuration {'range' if dash else 'id'}"
+                               f": '{chunk}'")
+        if first > last:
+            raise SweepRefused(f"The range '{chunk}' runs backwards, so it "
+                               f"selects nothing. Write {last}-{first}.")
+        selected.update(range(first, last + 1))
+
+    unknown = sorted(selected - set(table))
+    if unknown:
+        raise SweepRefused(f"No such configuration(s): "
+                           f"{', '.join(str(u) for u in unknown)}. "
+                           f"The table has {min(table)}-{max(table)}.")
+    return sorted(selected)
+
+
+def suggest(name, tests_dir):
+    """Files that look close to a workload name that did not resolve."""
+    try:
+        entries = sorted(os.listdir(tests_dir))
+    except OSError:
+        return []
+    # Compare on the stem, so a workload typed with an extension or as a
+    # path still finds its neighbours.
+    stem = os.path.splitext(os.path.basename(name))[0].lower()
+    return [e for e in entries
+            if os.path.splitext(e)[1] in EXT_PRIORITY
+            and stem in os.path.splitext(e)[0].lower()]
+
+
+def resolve_test_file(name, tests_dir):
+    """Turn a workload into a path. The table writes a bare name, but a name
+    with its extension and a path to a file are what a person types on
+    --tests, so all three resolve rather than only the first."""
+    # A path, absolute or relative to the working directory, taken as given.
+    if os.path.isfile(name):
+        return name
+
+    stem, ext = os.path.splitext(name)
+    if ext in EXT_PRIORITY:
+        # A name that already carries its extension, inside the tests folder.
+        candidate = os.path.join(tests_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+        # Fall through on the stem: the same workload under a different
+        # extension is a likelier intent than no match at all.
+        name = stem
+
+    matches = [os.path.join(tests_dir, name + e) for e in EXT_PRIORITY
+               if os.path.isfile(os.path.join(tests_dir, name + e))]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        print(f"[WARN] '{name}' matches more than one file: " +
+              ", ".join(os.path.basename(m) for m in matches) +
+              f". Using {os.path.basename(matches[0])}.")
+    return matches[0]
+
+
+def print_summary(results, total_elapsed):
+    """The pass and fail table, in plan order, from (config id, test, exit
+    code, seconds) rows. Returns how many failed."""
+    print("\n" + SEP)
+    print("SWEEP SUMMARY")
+    print(SEP)
+    print(f"{'CONFIG':>8} | {'TEST':<28} | {'STATUS':>10} | {'TIME':>9}")
+    print(SEP)
+
+    for config_id, name, code, elapsed in results:
+        status = "OK" if code == 0 else f"FAILED ({code})"
+        print(f"{('config' + str(config_id)):>8} | {name[:28]:<28} | "
+              f"{status:>10} | {format_duration(elapsed):>9}")
+
+    passed = sum(1 for _, _, code, _ in results if code == 0)
+    failed = len(results) - passed
+
+    print(SEP)
+    print(f"{len(results)} run, {passed} passed, {failed} failed, "
+          f"total {format_duration(total_elapsed)}")
+    print(SEP + "\n")
+
+    if failed:
+        print("[WARN] Failed: " + ", ".join(
+            f"config{c}/{n}" for c, n, code, _ in results if code != 0))
+    return failed
+
+# SHARED END py-sweep-common
+
+
+# SHARED BEGIN py-gem5-sweep
+
+# Needs: concurrent.futures, os, re, shutil, subprocess, sys, tempfile,
+# threading, time, ENTRY_RE, ROW_RE, CONTINUATION_RE, SELECTOR_RE, LABEL,
+# SWEEP_NAME, resolve_all, py-gem5-run-dirs, py-sweep-common
 
 
 def find_beside_script(name, what, extra=()):
@@ -290,94 +425,11 @@ def parse_table(text):
         workloads = []
         if "workload:" in comment:
             tail = comment.split("workload:", 1)[1]
-            tail = re.sub(r"\(.*?\)", "", tail)
+            # Parenthesised and bracketed notes are not workloads.
+            tail = re.sub(r"\(.*?\)|\[.*?\]", "", tail)
             workloads = [w.strip() for w in tail.split(",") if w.strip()]
         table[test_id] = (name, workloads)
     return table
-
-
-def resolve_all(table):
-    """The 'all' workload set: every workload the table names explicitly."""
-    named = []
-    for _, workloads in table.values():
-        for workload in workloads:
-            if workload.lower() != "all" and workload not in named:
-                named.append(workload)
-    return sorted(named)
-
-
-def suggest(name, tests_dir):
-    """Files that look close to a workload name that did not resolve."""
-    try:
-        entries = sorted(os.listdir(tests_dir))
-    except OSError:
-        return []
-    # Compare on the stem, so a workload typed with an extension or as a
-    # path still finds its neighbours.
-    stem = os.path.splitext(os.path.basename(name))[0].lower()
-    return [e for e in entries
-            if os.path.splitext(e)[1] in EXT_PRIORITY
-            and stem in os.path.splitext(e)[0].lower()]
-
-
-def resolve_test_file(name, tests_dir):
-    """Turn a workload into a path. The table writes a bare name, but a name
-    with its extension and a path to a file are what a person types on
-    --tests, so all three resolve rather than only the first."""
-    # A path, absolute or relative to the working directory, taken as given.
-    if os.path.isfile(name):
-        return name
-
-    stem, ext = os.path.splitext(name)
-    if ext in EXT_PRIORITY:
-        # A name that already carries its extension, inside the tests folder.
-        candidate = os.path.join(tests_dir, name)
-        if os.path.isfile(candidate):
-            return candidate
-        # Fall through on the stem: the same workload under a different
-        # extension is a likelier intent than no match at all.
-        name = stem
-
-    matches = [os.path.join(tests_dir, name + e) for e in EXT_PRIORITY
-               if os.path.isfile(os.path.join(tests_dir, name + e))]
-    if not matches:
-        return None
-    if len(matches) > 1:
-        print(f"[WARN] '{name}' matches more than one file: " +
-              ", ".join(os.path.basename(m) for m in matches) +
-              f". Using {os.path.basename(matches[0])}.")
-    return matches[0]
-
-
-def parse_config_selection(spec, table):
-    """Parse '1,4-6' into a sorted list of configuration ids. Raises
-    SweepRefused on a malformed or unknown id."""
-    if not spec:
-        return sorted(table)
-
-    selected = set()
-    for chunk in spec.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if "-" in chunk:
-            low, _, high = chunk.partition("-")
-            try:
-                selected.update(range(int(low), int(high) + 1))
-            except ValueError:
-                raise SweepRefused(f"Bad configuration range: '{chunk}'")
-        else:
-            try:
-                selected.add(int(chunk))
-            except ValueError:
-                raise SweepRefused(f"Bad configuration id: '{chunk}'")
-
-    unknown = sorted(selected - set(table))
-    if unknown:
-        raise SweepRefused(f"No such configuration(s): "
-                           f"{', '.join(str(u) for u in unknown)}. "
-                           f"The table has {min(table)}-{max(table)}.")
-    return sorted(selected)
 
 
 def build_plan(table, config_ids, tests_dir, override_tests):
@@ -427,8 +479,8 @@ def build_plan(table, config_ids, tests_dir, override_tests):
 def write_config_copy(text, config_id, dest_dir, base_name):
     """Write a copy of the configuration with the selector set to config_id.
     The sweep runs copies rather than editing in place, so the file is never
-    modified, nothing needs restoring, and runs can go in parallel. main has
-    already checked the selector line is there."""
+    modified, nothing needs restoring, and runs can go in parallel. The
+    caller has already checked the selector line is there."""
     new_text = SELECTOR_RE.sub(
         lambda m: f"{m.group(1)}{config_id}{m.group(3)}", text, count=1)
     path = os.path.join(dest_dir, f"{LABEL}{config_id}_{base_name}")
@@ -476,10 +528,11 @@ def keep_failed_config(config_copy, job_gem5_out):
         return None
 
 
-def print_plan(plan, all_tests):
-    """Every configuration with the tests it will run. Returns the number of
-    runs."""
-    print(f"[INFO] 'all' resolves to {len(all_tests)} workload(s): " +
+def print_plan(plan, all_tests, source):
+    """Every configuration with the tests it will run, and where 'all' comes
+    from. Returns the number of runs."""
+    print(f"[INFO] 'all' resolves to {len(all_tests)} workload(s), from "
+          f"{source}: " +
           (", ".join(all_tests) if all_tests else "nothing") + "\n")
     total = 0
     for config_id, description, paths in plan:
@@ -490,162 +543,6 @@ def print_plan(plan, all_tests):
               (", ".join(names) if names else "none"))
     print(f"\n[INFO] {len(plan)} configuration(s), {total} run(s) total.")
     return total
-
-
-def print_summary(results, total_elapsed):
-    """The pass and fail table, in plan order. Returns how many failed."""
-    print("\n" + SEP)
-    print("SWEEP SUMMARY")
-    print(SEP)
-    print(f"{'CONFIG':>8} | {'TEST':<28} | {'STATUS':>10} | {'TIME':>9}")
-    print(SEP)
-
-    for config_id, name, code, elapsed in results:
-        status = "OK" if code == 0 else f"FAILED ({code})"
-        print(f"{('config' + str(config_id)):>8} | {name[:28]:<28} | "
-              f"{status:>10} | {format_duration(elapsed):>9}")
-
-    passed = sum(1 for _, _, code, _ in results if code == 0)
-    failed = len(results) - passed
-
-    print(SEP)
-    print(f"{len(results)} run, {passed} passed, {failed} failed, "
-          f"total {format_duration(total_elapsed)}")
-    print(SEP + "\n")
-
-    if failed:
-        print("[WARN] Failed: " + ", ".join(
-            f"config{c}/{n}" for c, n, code, _ in results if code != 0))
-    return failed
-
-
-def build_parser(driver):
-    """The sweep's command line, whose --suite and --variant choices are the
-    driver's own tables."""
-    parser = argparse.ArgumentParser(
-        description="Run the MinorFlow configuration sweep: each entry of the "
-                    "TEST table, with the workloads it was made for.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"Sweeps {DEFAULT_CONFIG}, which it is written for, "
-               f"unless\n--config names a copy. An entry whose workload is "
-               f"'all' runs\nevery workload named in the table. Run this "
-               f"from the gem5 root,\nlike run_gem5.py.\n"
-               f"\n"
-               f"Any flag this script does not define is passed on to the "
-               f"configuration\nbeing swept, through run_gem5.py and the same "
-               f"for every run of the\nsweep. Put them after a '--' when a "
-               f"flag takes a value or shares a\nname with one of ours.")
-    parser.add_argument("--config", default="",
-                        help=f"Sweep a different configuration file. The "
-                             f"sweep is written for {DEFAULT_CONFIG} and uses "
-                             f"it unless this says otherwise, so only pass it "
-                             f"for a copy or a variant of that file")
-    parser.add_argument("--configs", default="",
-                        help="Which configurations to run, e.g. '1,4-6'. "
-                             "Defaults to all of them")
-    parser.add_argument("--tests-dir", default=None,
-                        help="Folder holding the workloads, resolved the way "
-                             "run_gem5.py resolves a path. Defaults to the "
-                             "first of "
-                             + ", ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
-                             + " that exists")
-    parser.add_argument("--tests", default="",
-                        help="Comma-separated workloads to run for every "
-                             "configuration, instead of the ones the table "
-                             "names. A bare name, a file name with its "
-                             "extension, or a path all work")
-    parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
-                        help=f"How many runs to keep in flight. Defaults "
-                             f"to {DEFAULT_JOBS} here. gem5 is single-"
-                             f"threaded, so this scales with cores until "
-                             f"memory or disk bandwidth binds. 1 runs "
-                             f"them one by one and streams the output "
-                             f"live")
-    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
-                        help=f"Where to collect the results. Defaults to "
-                             f"{DEFAULT_OUT_DIR}/")
-    parser.add_argument("--no-trace", action="store_true",
-                        help="Forwarded to run_gem5.py: no debug trace, "
-                             "metrics only")
-    parser.add_argument("--suite", choices=sorted(driver.OVERHEAD_SUITES),
-                        default=None,
-                        help="Forwarded to run_gem5.py: which overhead table "
-                             "to subtract. Defaults to the .overhead_suite "
-                             "beside each workload, and run_gem5.py stops "
-                             "without one")
-    parser.add_argument("--variant", choices=sorted(driver.GEM5_BUILDS),
-                        default="stock",
-                        help="Forwarded to run_gem5.py: which build to run "
-                             "and whose overhead profile to subtract. This "
-                             "sweep is a stock-gem5 one, so 'stock'")
-    parser.add_argument("--build", default=None, metavar="NAME",
-                        help="Forwarded to run_gem5.py: which build to run, "
-                             "by directory name under build/, a path to one, "
-                             "or a path to the binary")
-    parser.add_argument("--skip-build-check", action="store_true",
-                        help="Forwarded to run_gem5.py: run even when the "
-                             "build does not match --variant")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print the plan and exit, touching nothing")
-    return parser
-
-
-def plan_sweep(args, config_args, resolve_input):
-    """Read the configuration's table, print the header and the plan, and
-    return (config path, config text, plan). Raises SweepRefused when there
-    is nothing that can run."""
-    config_path = (os.path.abspath(args.config) if args.config
-                   else find_beside_script(
-                       DEFAULT_CONFIG, "Sweep config",
-                       extra=[
-                           # In this repository, beside the scripts/ folder.
-                           os.path.join("..", "configs"),
-                           # In the container, where every configuration is
-                           # under gem5_configs/ by origin.
-                           os.path.join("..", "gem5_configs", "viewer"),
-                           os.path.join("..", "gem5_configs", "config")]))
-    if not os.path.isfile(config_path):
-        raise SweepRefused(f"Configuration not found: {config_path}")
-
-    with open(config_path) as f:
-        config_text = f.read()
-
-    table = parse_table(config_text)
-    if not table:
-        raise SweepRefused(
-            f"No TEST table found in {config_path}. Expected a "
-            f"'TESTS = {{...}}' dict keyed by integer.")
-    if not SELECTOR_RE.search(config_text):
-        raise SweepRefused(
-            f"No 'TEST = <n>' line found in {config_path}, so a "
-            f"configuration cannot be selected.")
-
-    config_ids = parse_config_selection(args.configs, table)
-    override_tests = [t.strip() for t in args.tests.split(",") if t.strip()]
-    all_tests = override_tests if override_tests else resolve_all(table)
-    # Resolved once, here, so every later use and every printed path is the
-    # folder actually being read.
-    args.tests_dir = find_tests_dir(args.tests_dir, resolve_input)
-
-    print(SEP)
-    print("MINORFLOW SWEEP")
-    print(SEP)
-    print(f"Config    : {config_path}")
-    print(f"Tests dir : {args.tests_dir}")
-    print(f"Out dir   : {os.path.abspath(args.out_dir)}")
-    print(f"Jobs      : {max(1, args.jobs)}")
-    print(f"Tracing   : "
-          f"{'disabled (--no-trace)' if args.no_trace else 'enabled'}")
-    if config_args:
-        print(f"Cfg flags : {' '.join(config_args)}")
-    print(SEP + "\n")
-
-    if not os.path.isdir(args.tests_dir):
-        raise SweepRefused(f"Folder not found: {args.tests_dir}")
-
-    plan = build_plan(table, config_ids, args.tests_dir, override_tests)
-    print_plan(plan, all_tests)
-    return config_path, config_text, plan
 
 
 def run_queue(args, runner, config_args, config_text, base_name, plan,
@@ -666,9 +563,9 @@ def run_queue(args, runner, config_args, config_text, base_name, plan,
         if stop.is_set():
             return
         test_name = os.path.splitext(os.path.basename(path))[0]
-        label = f"{LABEL}{config_id}_{test_name}"
-        job_gem5_out, job_results = job_dirs(label)
-        # Anything left from an earlier sweep would otherwise be collected.
+        # The index keeps two runs of one test in a plan apart.
+        job_gem5_out, job_results = job_dirs(
+            SWEEP_NAME, f"{index}_{LABEL}{config_id}_{test_name}")
         discard_run(job_gem5_out, job_results)
 
         cmd = [sys.executable, runner, config_copy, path,
@@ -785,13 +682,15 @@ def gather(args, config_args, base_name, out_dir, results, elapsed):
                for _, cid, name, code, seconds in sorted(results)]
     failed = print_summary(ordered, elapsed)
 
-    # Only a run that passed left a table behind to gather.
+    # Only a run that passed left a table behind to gather. The selection is
+    # in the name, so a second sweep of other ids beside it keeps both.
     write_metrics_file(
         out_dir,
         [(f"{LABEL}{cid} / {name}",
           os.path.join(out_dir, f"{name}_report.{LABEL}{cid}.txt"))
          for cid, name, code, _ in ordered if code == 0],
         [f"Config   : {base_name}",
+         f"Selection: {args.configs or '(default)'}",
          f"Variant  : {args.variant}",
          f"Build    : {args.build or '(from --variant)'}"
          + ("  [--skip-build-check]" if args.skip_build_check else ""),
@@ -799,8 +698,9 @@ def gather(args, config_args, base_name, out_dir, results, elapsed):
          f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
          f"Tests dir: {args.tests_dir}",
          f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"],
-        metrics_filename([os.path.splitext(base_name)[0], args.variant,
-                          args.build, args.suite, " ".join(config_args)]))
+        metrics_filename([os.path.splitext(base_name)[0], args.configs,
+                          args.variant, args.build, args.suite,
+                          " ".join(config_args)]))
 
     print(f"[INFO] Results in {out_dir}")
     if failed:
@@ -811,6 +711,137 @@ def gather(args, config_args, base_name, out_dir, results, elapsed):
     prune_empty(driver_results_dir())
     prune_empty(GEM5_OUT_DIR)
     return failed
+
+# SHARED END py-gem5-sweep
+
+
+def build_parser(driver):
+    """The sweep's command line, whose --suite and --variant choices are the
+    driver's own tables."""
+    parser = argparse.ArgumentParser(
+        description="Run the MinorFlow configuration sweep: each entry of the "
+                    "TEST table, with the workloads it was made for.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Sweeps {DEFAULT_CONFIG}, which it is written for, "
+               f"unless\n--config names a copy. An entry whose workload is "
+               f"'all' runs\nevery workload named in the table. Run this "
+               f"from the gem5 root,\nlike run_gem5.py.\n"
+               f"\n"
+               f"Any flag this script does not define is passed on to the "
+               f"configuration\nbeing swept, through run_gem5.py and the same "
+               f"for every run of the\nsweep. Put them after a '--' when a "
+               f"flag takes a value or shares a\nname with one of ours.")
+    parser.add_argument("--config", default="",
+                        help=f"Sweep a different configuration file. The "
+                             f"sweep is written for {DEFAULT_CONFIG} and uses "
+                             f"it unless this says otherwise, so only pass it "
+                             f"for a copy or a variant of that file")
+    parser.add_argument("--configs", default="",
+                        help="Which configurations to run, e.g. '1,4-6'. "
+                             "Defaults to all of them")
+    parser.add_argument("--tests-dir", default=None,
+                        help="Folder holding the workloads, resolved the way "
+                             "run_gem5.py resolves a path. Defaults to the "
+                             "first of "
+                             + ", ".join(d + "/" for d in DEFAULT_TESTS_DIRS)
+                             + " that exists")
+    parser.add_argument("--tests", default="",
+                        help="Comma-separated workloads to run for every "
+                             "configuration, instead of the ones the table "
+                             "names. A bare name, a file name with its "
+                             "extension, or a path all work")
+    parser.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
+                        help=f"How many runs to keep in flight. Defaults "
+                             f"to {DEFAULT_JOBS} here. gem5 is single-"
+                             f"threaded, so this scales with cores until "
+                             f"memory or disk bandwidth binds. 1 runs "
+                             f"them one by one and streams the output "
+                             f"live")
+    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
+                        help=f"Where to collect the results. Defaults to "
+                             f"{DEFAULT_OUT_DIR}/")
+    parser.add_argument("--no-trace", action="store_true",
+                        help="Forwarded to run_gem5.py: no debug trace, "
+                             "metrics only")
+    parser.add_argument("--suite", choices=sorted(driver.OVERHEAD_SUITES),
+                        default=None,
+                        help="Forwarded to run_gem5.py: which overhead table "
+                             "to subtract. Defaults to the .overhead_suite "
+                             "beside each workload, and run_gem5.py stops "
+                             "without one")
+    parser.add_argument("--variant", choices=sorted(driver.GEM5_BUILDS),
+                        default="stock",
+                        help="Forwarded to run_gem5.py: which build to run "
+                             "and whose overhead profile to subtract. This "
+                             "sweep is a stock-gem5 one, so 'stock'")
+    parser.add_argument("--build", default=None, metavar="NAME",
+                        help="Forwarded to run_gem5.py: which build to run, "
+                             "by directory name under build/, a path to one, "
+                             "or a path to the binary")
+    parser.add_argument("--skip-build-check", action="store_true",
+                        help="Forwarded to run_gem5.py: run even when the "
+                             "build does not match --variant")
+    parser.add_argument("-n", "--dry-run", action="store_true",
+                        help="Print the plan and exit, touching nothing")
+    return parser
+
+
+def plan_sweep(args, config_args, resolve_input):
+    """Read the configuration's table, print the header and the plan, and
+    return (config path, config text, plan). Raises SweepRefused when there
+    is nothing that can run."""
+    config_path = (os.path.abspath(args.config) if args.config
+                   else find_beside_script(
+                       DEFAULT_CONFIG, "Sweep config",
+                       extra=[
+                           # In this repository, beside the scripts/ folder.
+                           os.path.join("..", "configs"),
+                           # In the container, where every configuration is
+                           # under gem5_configs/ by origin.
+                           os.path.join("..", "gem5_configs", "viewer"),
+                           os.path.join("..", "gem5_configs", "config")]))
+    if not os.path.isfile(config_path):
+        raise SweepRefused(f"Configuration not found: {config_path}")
+
+    with open(config_path) as f:
+        config_text = f.read()
+
+    table = parse_table(config_text)
+    if not table:
+        raise SweepRefused(
+            f"No TEST table found in {config_path}. Expected a "
+            f"'TESTS = {{...}}' dict keyed by integer.")
+    if not SELECTOR_RE.search(config_text):
+        raise SweepRefused(
+            f"No 'TEST = <n>' line found in {config_path}, so a "
+            f"configuration cannot be selected.")
+
+    config_ids = parse_config_selection(args.configs, table)
+    override_tests = [t.strip() for t in args.tests.split(",") if t.strip()]
+    all_tests = override_tests if override_tests else resolve_all(table)
+    # Resolved once, here, so every later use and every printed path is the
+    # folder actually being read.
+    args.tests_dir = find_tests_dir(args.tests_dir, resolve_input)
+
+    print(SEP)
+    print("MINORFLOW SWEEP")
+    print(SEP)
+    print(f"Config    : {config_path}")
+    print(f"Tests dir : {args.tests_dir}")
+    print(f"Out dir   : {os.path.abspath(args.out_dir)}")
+    print(f"Jobs      : {max(1, args.jobs)}")
+    print(f"Tracing   : "
+          f"{'disabled (--no-trace)' if args.no_trace else 'enabled'}")
+    if config_args:
+        print(f"Cfg flags : {' '.join(config_args)}")
+    print(SEP + "\n")
+
+    if not os.path.isdir(args.tests_dir):
+        raise SweepRefused(f"Folder not found: {args.tests_dir}")
+
+    plan = build_plan(table, config_ids, args.tests_dir, override_tests)
+    print_plan(plan, all_tests, "--tests" if override_tests else "the table")
+    return config_path, config_text, plan
 
 
 def run_sweep():

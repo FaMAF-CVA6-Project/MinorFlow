@@ -3,9 +3,9 @@
 
 A profile is what the harness around a measured region costs on its own:
 the empty test_template of a suite, run on one build in one language, read
-from the OFFICIAL column. This runs every template on the build and the
-matched configuration of each variant, prints the profiles beside the ones
-run_gem5.py carries, and with --write puts them into it.
+from the OFFICIAL column. This runs every template on each variant's build
+and on the configuration that suite's programs run on, prints the profiles
+beside the ones run_gem5.py carries, and with --write puts them into it.
 
 Launch it from the gem5 root, where run_gem5.py is launched from:
 
@@ -25,10 +25,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNNER = os.path.join(HERE, "run_gem5.py")
 
-# The configuration each variant's profile is measured on: the matched one,
-# the same the calibration runs, since a profile is in cycles of that core.
-CONFIGS = {"stock": "gem5_config_CVA6.py",
-           "patch": "gem5_config_CVA6_patch.py"}
+# The configuration each profile is measured on, by suite and variant: the
+# core that suite's programs run on, the matched ones for the calibration
+# set and MinorFlow's own, on either build, for the viewer's programs.
+CONFIGS = {
+    "config": {"stock": "gem5_config_CVA6.py",
+               "patch": "gem5_config_CVA6_patch.py"},
+    "viewer": {"stock": "gem5_config_MinorFlow.py",
+               "patch": "gem5_config_MinorFlow.py"},
+}
 
 # The template of each language, and where each suite's templates live, the
 # container's layout first and then this repository's own.
@@ -67,7 +72,7 @@ def measure(job, dry_run):
     """Run one template and return (job, profile or an error message)."""
     suite, variant, lang, template = job
     label = f"{suite}_{variant}_{lang}"
-    cmd = [sys.executable, RUNNER, CONFIGS[variant], template,
+    cmd = [sys.executable, RUNNER, CONFIGS[suite][variant], template,
            "--variant", variant, "--lang", lang, "--no-trace",
            "--gem5-out-dir", os.path.join(OUT_DIR, "m5out", label),
            "--results-dir", os.path.join(OUT_DIR, "run", label)]
@@ -117,8 +122,9 @@ def main():
         description="Measure run_gem5.py's overhead profiles from the empty "
                     "templates.",
         epilog="Each profile runs the suite's empty template on the variant's "
-               "build and its matched\nconfiguration, "
-               + " and ".join(f"{v}: {c}" for v, c in CONFIGS.items()) + ".")
+               "build and the\nconfiguration the suite's programs run on:\n"
+               + "\n".join(f"  {s} {v}: {c}" for s in CONFIGS
+                           for v, c in CONFIGS[s].items()))
     parser.add_argument("--suite", choices=["config", "viewer", "all"],
                         default="all", help="Which suite. Defaults to both")
     parser.add_argument("--variant", choices=["stock", "patch", "all"],

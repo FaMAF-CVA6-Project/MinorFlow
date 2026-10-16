@@ -4,7 +4,7 @@ templates and printing a pass/fail summary. Run it from the gem5 root, which
 run_gem5.py takes as the current directory:
 
     python3 scripts/run_all_gem5_benchmarks.py \
-        configs/gem5_config_MinorFlow.py benchmarks/
+        gem5_config_MinorFlow.py benchmarks/viewer
 """
 import argparse
 import concurrent.futures
@@ -38,6 +38,9 @@ GEM5_OUT_DIR = os.path.join("results", "m5out")
 
 # Where the batch gathers what it keeps, one folder for the whole run.
 DEFAULT_OUT_DIR = os.path.join("results", "batch")
+
+# The name a run's working folders carry under results/m5out/.
+BATCH_NAME = "batch"
 
 # Tests to run at a time, capped at 4: each run holds a gem5 process and
 # writes a trace, so memory and disk bind before cores do.
@@ -185,12 +188,14 @@ def driver_results_dir():
     return os.path.join("results", "run")
 
 
-def job_dirs(label):
-    """The private folders one run works in. Each job gets its own, so
-    concurrent runs cannot overwrite each other's stats.txt, trace or
-    binary."""
-    return (os.path.join(GEM5_OUT_DIR, label),
-            os.path.join(driver_results_dir(), label))
+def job_dirs(tool, label):
+    """The private folders one run works in, named after the tool, this
+    process and the run. Neither the jobs of one batch nor two tools running
+    at once in one gem5 root can then overwrite or delete each other's
+    stats.txt, trace or binary."""
+    name = f"{tool}_{os.getpid()}_{label}"
+    return (os.path.join(GEM5_OUT_DIR, name),
+            os.path.join(driver_results_dir(), name))
 
 
 def discard_run(job_gem5_out, job_results):
@@ -277,8 +282,8 @@ def warn_duplicates(tests, folder):
 
     print(f"[WARN] {len(duplicates)} test name(s) appear more than once. "
           f"Outputs are named after the program, so these runs overwrite "
-          f"each other's binary and their collected trace, .list, "
-          f"_report.txt and _stats.txt:")
+          f"each other's collected trace, .list, _report.txt and "
+          f"_stats.txt:")
     for stem in sorted(duplicates):
         print(f"[WARN]   '{stem}':")
         for path in duplicates[stem]:
@@ -408,7 +413,7 @@ def main():
                              "build does not match --variant")
     parser.add_argument("-r", "--recursive", action="store_true",
                         help="Also pick up tests in subfolders")
-    parser.add_argument("--dry-run", action="store_true",
+    parser.add_argument("-n", "--dry-run", action="store_true",
                         help="List what would run, and the name clashes, "
                              "without running anything")
     own_argv, after_separator = split_own_args(sys.argv[1:])
@@ -503,10 +508,9 @@ def main():
             return
         name = os.path.basename(path)
         test_name = os.path.splitext(name)[0]
-        # Prefixed, since a plain run_gem5.py run leaves its binary in
-        # results/m5out/ under the bare test name.
-        job_gem5_out, job_results = job_dirs(f"batch_{test_name}")
-        # Anything left from an earlier batch would otherwise be collected.
+        # The index keeps two tests of one name, from -r, apart.
+        job_gem5_out, job_results = job_dirs(BATCH_NAME,
+                                             f"{index}_{test_name}")
         discard_run(job_gem5_out, job_results)
 
         cmd = [sys.executable, runner, args.config_file, path,
@@ -616,8 +620,10 @@ def main():
          f"Suite    : {args.suite or '(run_gem5.py default)'}",
          f"Cfg flags: {' '.join(config_args) if config_args else '(none)'}",
          f"Runs     : {len(ordered)}, {len(ordered) - failed} passed"],
+        # The folder is in the name, so a batch of each suite into one
+        # --out-dir keeps both tables.
         metrics_filename([os.path.splitext(
-            os.path.basename(args.config_file))[0],
+            os.path.basename(args.config_file))[0], os.path.basename(folder),
             args.variant, args.build, args.suite,
             " ".join(config_args)]))
 

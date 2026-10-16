@@ -5,7 +5,10 @@ Accepts both C (.c) and assembly (.S/.s/.asm/.sx) programs. The input type
 is detected from the extension and can be forced with --lang. Run it from
 the gem5 root:
 
-    python3 scripts/run_gem5.py configs/gem5_config_MinorFlow.py daxpy.S
+    python3 scripts/run_gem5.py gem5_config_MinorFlow.py \
+        benchmarks/viewer/daxpy.S
+
+A path is taken as given, and a bare name is looked for in the usual folders.
 """
 import argparse
 import hashlib
@@ -71,18 +74,21 @@ M5_INCLUDE = os.path.join(GEM5_ROOT, "include")
 M5_OP_ASM = os.path.join(GEM5_ROOT, "util/m5/src/abi/riscv/m5op.S")
 
 # Freestanding, since a test calls only the m5 ops and has no C library.
+# -e main is the entry point in both languages, since there is no crt0 and so
+# no _start for the linker to find.
 COMMON_CFLAGS = [
     "-static",
     "-mcmodel=medany",
     "-fvisibility=hidden",
     "-nostdlib",
     "-nostartfiles",
+    "-e", "main",
     "-lgcc",
     "-march=rv64gc_zba_zbb_zbs_zbc_zbkb_zbkx_zkne_zknd_zknh",
     "-mabi=lp64d",
 ]
-# The C path adds these. -e main fixes the entry point (there is no crt0).
-C_EXTRA_CFLAGS = ["-fno-builtin", "-e", "main"]
+# The C path adds this, so a loop is never turned into a library call.
+C_EXTRA_CFLAGS = ["-fno-builtin"]
 
 # Extensions recognised per input type.
 C_EXTS = {".c"}
@@ -161,24 +167,24 @@ OVERHEAD_SUITES = {
     "viewer": {
         "patch": {
             "c": {
-                "numCycles":        21,
+                "numCycles":        20,
                 "numInsts":         5,
-                "icache_miss":      1,
+                "icache_miss":      0,
                 "dcache_miss":      0,
-                "icache_access":    15,
+                "icache_access":    10,
                 "dcache_access":    0,
                 "branch_pred":      3,
-                "branch_miss":      1,
+                "branch_miss":      2,
             },
             "asm": {
-                "numCycles":        25,
+                "numCycles":        37,
                 "numInsts":         5,
                 "icache_miss":      1,
                 "dcache_miss":      0,
-                "icache_access":    15,
+                "icache_access":    10,
                 "dcache_access":    0,
                 "branch_pred":      3,
-                "branch_miss":      1,
+                "branch_miss":      2,
             },
         },
         "stock": {
@@ -187,52 +193,82 @@ OVERHEAD_SUITES = {
                 "numInsts":         5,
                 "icache_miss":      0,
                 "dcache_miss":      0,
-                "icache_access":    16,
+                "icache_access":    10,
                 "dcache_access":    0,
                 "branch_pred":      3,
                 "branch_miss":      2,
             },
             "asm": {
-                "numCycles":        17,
+                "numCycles":        37,
                 "numInsts":         5,
-                "icache_miss":      0,
+                "icache_miss":      1,
                 "dcache_miss":      0,
-                "icache_access":    12,
+                "icache_access":    10,
                 "dcache_access":    0,
-                "branch_pred":      2,
-                "branch_miss":      1,
+                "branch_pred":      3,
+                "branch_miss":      2,
             },
         },
     },
 }
 
 
+# Where a bare name is looked for, in this order under the gem5 root and then
+# this repository. The frozen CARLA2026 copy is last, so the live one wins.
+NAME_FOLDERS = ("gem5_configs/config", "gem5_configs/viewer", "configs",
+                "benchmarks/config", "benchmarks/viewer", "benchmarks",
+                "gem5_configs/CARLA2026")
+
+
+def by_name(name):
+    """Every file called name in NAME_FOLDERS, under the gem5 root and then
+    this repository, in that order and each once."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    found, seen = [], set()
+    for base in (os.curdir, os.path.dirname(here), here):
+        for sub in NAME_FOLDERS:
+            candidate = os.path.normpath(os.path.join(base, sub, name))
+            real = os.path.realpath(candidate)
+            if os.path.exists(candidate) and real not in seen:
+                seen.add(real)
+                found.append(candidate)
+    return found
+
+
+def not_found(what, path):
+    """Say a config or test is missing, naming any file of that name in the
+    usual folders, which is what a path into the wrong folder meant."""
+    print(f"[ERROR] {what} not found: {path}", file=sys.stderr)
+    elsewhere = by_name(os.path.basename(path))
+    if elsewhere and os.path.basename(path) != path:
+        print(f"[ERROR] A file of that name is at {', '.join(elsewhere)}. "
+              f"Give that path, or the bare name.", file=sys.stderr)
+
+
 def resolve_input(path):
     """A config or test path, resolved against the gem5 root and then against
-    this script's own repository.
+    this script's own repository. A bare name is also looked for in
+    NAME_FOLDERS, and when several hold it the first is taken and named.
 
     The script has to run from the gem5 root, because that is where gem5's
     build/, include/ and m5op.S are."""
     if not path or os.path.exists(path):
         return path
     here = os.path.dirname(os.path.abspath(__file__))
-    repo = os.path.dirname(here)
-    # The current directory first, which in the container is the root holding
-    # configs/ and benchmarks/, then this script's own repository.
-    for base in (os.curdir, repo, here):
+    for base in (os.path.dirname(here), here):
         candidate = os.path.join(base, path)
-        if base != os.curdir and os.path.exists(candidate):
+        if os.path.exists(candidate):
             return candidate
-        # Also the bare name inside the usual folders, so 'daxpy.S' finds
-        # benchmarks/config/daxpy.S and a configuration its gem5_configs/
-        # folder. The frozen CARLA2026 copy is last, so the live one wins.
-        for sub in ("gem5_configs/config", "gem5_configs/viewer", "configs",
-                    "benchmarks/config", "benchmarks/viewer", "benchmarks",
-                    "gem5_configs/CARLA2026"):
-            candidate = os.path.join(base, sub, os.path.basename(path))
-            if os.path.exists(candidate):
-                return candidate
-    return path
+    # A path is never swapped for a file of the same name elsewhere, so a
+    # mistyped folder is reported as missing.
+    if os.path.basename(path) != path:
+        return path
+    found = by_name(path)
+    if len(found) > 1:
+        print(f"[WARN] '{path}' is in more than one folder: "
+              f"{', '.join(found)}. Using {found[0]}. Give its path to run "
+              f"another.")
+    return found[0] if found else path
 
 
 # A one-line file in a benchmark directory naming the overhead suite its
@@ -544,9 +580,14 @@ def resolve_gem5_bin(spec):
     return None
 
 
+# SHARED BEGIN py-patch-marker
+
+# Needs: PATCH_MARKER
+
+
 def build_is_patched(path):
     """Whether this gem5 binary carries the patch, or None if it cannot be
-    read."""
+    read. Read in chunks, since a gem5.opt runs to hundreds of megabytes."""
     overlap = len(PATCH_MARKER) - 1
     try:
         with open(path, "rb") as handle:
@@ -560,6 +601,15 @@ def build_is_patched(path):
                 tail = chunk[-overlap:]
     except OSError:
         return None
+
+# SHARED END py-patch-marker
+
+
+def is_patch_build(gem5_bin):
+    """Whether the binary is build/RISCV_PATCH's, the build .built_patch_sha1
+    is written for."""
+    folder = os.path.basename(os.path.dirname(os.path.abspath(gem5_bin)))
+    return folder == GEM5_BUILDS["patch"]
 
 
 def patch_fingerprint():
@@ -592,9 +642,14 @@ def run_gem5(config_file, bin_file, no_trace, program_name, out_dir,
     return the path of the stats.txt it writes."""
     os.makedirs(out_dir, exist_ok=True)
 
+    # Whatever an earlier run in this folder left would otherwise be read or
+    # copied out as this run's, a trace above all when this one has none.
     stats_path = os.path.join(out_dir, "stats.txt")
-    if os.path.exists(stats_path):
-        os.remove(stats_path)
+    for stale in (stats_path,
+                  os.path.join(out_dir, f"{program_name}_trace.txt"),
+                  os.path.join(out_dir, f"{program_name}_error.log")):
+        if os.path.exists(stale):
+            os.remove(stale)
 
     # Resolved and checked by the caller, so a missing binary is reported
     # there rather than as a TypeError out of subprocess.
@@ -716,6 +771,7 @@ def parse_stats(stats_path):
     with the branch sums the table shows."""
     print("[INFO] Extracting statistics")
     results = {key: 0.0 for key in METRICS_MAP}
+    seen = set()
     # None rather than zero: a stock build never writes these, and gem5 omits
     # one that is zero, so the two cases have to stay apart from a real count.
     for keys in CVA6_EXTRA.values():
@@ -740,10 +796,23 @@ def parse_stats(stats_path):
                             if len(parts) >= 2:
                                 try:
                                     results[key] = float(parts[1])
+                                    seen.add(key)
                                 except ValueError:
                                     pass
     except FileNotFoundError:
         print("[ERROR] stats.txt not found", file=sys.stderr)
+        raise RunFailed()
+
+    # Every other counter may be absent because gem5 leaves out a zero, but a
+    # run always has cycles and instructions. Without them the configuration
+    # names its core otherwise, and a table of zeros would read as a result.
+    missing = [METRICS_MAP[key] for key in ("numCycles", "numInsts")
+               if key not in seen]
+    if missing:
+        print(f"[ERROR] {stats_path} has no {' and no '.join(missing)} in "
+              f"its first block, so there is no table to report. These "
+              f"statistics expect the CPU at cores.core, as the "
+              f"configurations here name it.", file=sys.stderr)
         raise RunFailed()
 
     # Branches: committed control-flow instructions, as CVA6 counts them. BTB
@@ -953,11 +1022,10 @@ def main():
     # Resolved here rather than as an argparse default: it reads the test's
     # path, which is not known until now.
     if not os.path.exists(config_file):
-        print(f"[ERROR] Configuration not found: {config_file}",
-              file=sys.stderr)
+        not_found("Configuration", config_file)
         return 1
     if not os.path.exists(src_file):
-        print(f"[ERROR] Test not found: {src_file}", file=sys.stderr)
+        not_found("Test", src_file)
         return 1
     if args.suite is None:
         args.suite = default_suite(src_file)
@@ -1027,13 +1095,15 @@ def main():
         [os.path.basename(config_file)] + list(config_args))
     # Both on the header, so a gathered metrics file says what produced it.
     build_label = f"{gem5_bin}  (overhead: {args.suite}/{args.variant}/{lang})"
-    built_patch, current_patch = patch_fingerprint()
-    if built_patch:
-        build_label += f"  (patch {built_patch})"
-    if built_patch and current_patch and built_patch != current_patch:
-        print(f"[WARN] {PATCH_FILE} is now {current_patch}, but this gem5 was "
-              f"built from {built_patch}. Rebuild the image, or the run does "
-              f"not carry the patch you are reading.")
+    # The marker speaks for build/RISCV_PATCH alone, so only that build's
+    # line names a patch. A stock run's line says nothing of one.
+    if is_patch_build(gem5_bin):
+        built_patch, current_patch = patch_fingerprint()
+        build_label += f"  (patch {built_patch or 'unrecorded'})"
+        if built_patch and current_patch and built_patch != current_patch:
+            print(f"[WARN] {PATCH_FILE} is now {current_patch}, but this gem5 "
+                  f"was built from {built_patch}. Rebuild the image, or the "
+                  f"run does not carry the patch you are reading.")
     header = build_table_header(f"gem5 [{args.variant}]", config_label,
                                 os.path.basename(src_file), geometry,
                                 build_label)
