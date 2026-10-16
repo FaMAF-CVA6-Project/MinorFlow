@@ -4,7 +4,7 @@ window.__SAMPLE_MANIFEST__ = [
     "label": "branch_stress",
     "tool": "minorflow_tracer",
     "schema_version": 8,
-    "n_records": 3000
+    "n_records": 66213
   },
   {
     "file": "daxpy.sample.js",
@@ -25,7 +25,7 @@ window.__SAMPLE_MANIFEST__ = [
     "label": "icache_hit_loop",
     "tool": "minorflow_tracer",
     "schema_version": 8,
-    "n_records": 3000
+    "n_records": 65236
   },
   {
     "file": "int_loop.sample.js",
@@ -46,6 +46,6 @@ window.__SAMPLE_MANIFEST__ = [
     "label": "stream_store",
     "tool": "minorflow_tracer",
     "schema_version": 8,
-    "n_records": 3000
+    "n_records": 62315
   }
 ];
