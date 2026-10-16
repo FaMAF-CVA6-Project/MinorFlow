@@ -4,15 +4,17 @@ MinorFlow viewer loads.
 
 The trace is read in two streamed passes. The first finds the clock period
 from the gaps between ticks, and the second recovers every instruction that
-reached Execute. The JSON holds one record per instruction, with its stage
-cycles, cache verdicts, branch outcome, bubble, pre-fetch wait and forwarding
-producers, and beside the records the I-cache, D-cache and return address
-stack events. Windowing, waits, stalls and drawing live in the viewer.
+reached Execute. The JSON, schema 8, holds one record per instruction, with
+its stage cycles, cache verdicts, branch outcome, bubble, pre-fetch wait,
+register dependences and forwards, and beside the records the I-cache,
+D-cache and return address stack events. README.md describes every key under
+"The JSON". Windowing, waits, stalls and drawing live in the viewer.
 
 Usage:
     python3 MinorFlow_tracer.py daxpy_trace.txt -o daxpy.json
     python3 MinorFlow_tracer.py daxpy_trace.txt      # writes daxpy.json
     python3 MinorFlow_tracer.py daxpy_trace.txt --tpc 10000 --strict
+    python3 MinorFlow_tracer.py daxpy_trace.txt --config-name my_config.py
 """
 import argparse
 import bisect
@@ -29,7 +31,7 @@ import time
 # ============================================================================
 
 # Bumped with every change a reader would misread.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 TOOL = "minorflow_tracer"
 
 # The viewer and the scripts clip and shift a JSON by these lists, so they
@@ -45,10 +47,10 @@ RECORD_FIELDS = (
     "scoreboard_return_cycle", "co_cycle", "flushed", "flush_cycle",
     "is_store", "lsq_push_cycle", "lsq_issue_cycle", "lsq_complete_cycle",
     "dc_miss", "dc_coalesced", "sb_push_cycle", "sb_delete_cycle",
-    "collision_wait_cycles", "collision_replay_cycles", "fwd_producer_ids",
-    "fwd_producer_regs", "data_arrival_cycle", "data_arrival_producer_id",
-    "data_arrival_is_mem", "is_control", "bp_kind", "bp_predicted_taken",
-    "bp_outcome", "bp_resolved_taken", "bp_decided_at", "fe1_redirect_cycle",
+    "collision_wait_cycles", "collision_replay_cycles", "dep_producer_ids",
+    "dep_producer_regs", "fwd_producer_ids", "fwd_producer_regs",
+    "is_control", "bp_kind", "bp_predicted_taken", "bp_outcome",
+    "bp_resolved_taken", "bp_decided_at", "fe1_redirect_cycle",
     "ras_push_cycle", "ras_pop_cycle", "ras_drop_cycle",
     "synthesised_stages", "n_pre_fetch_wait_cycles",
     "pre_fetch_wait_shared_id", "bubble_kind", "bubble_causer_id",
@@ -63,16 +65,15 @@ CYCLE_FIELDS = (
     "fe2_cycle", "dec_cycle", "ex_arrival_cycle", "ex_cycle",
     "fu_done_cycle", "scoreboard_return_cycle", "co_cycle", "flush_cycle",
     "lsq_push_cycle", "lsq_issue_cycle", "lsq_complete_cycle",
-    "sb_push_cycle", "sb_delete_cycle", "data_arrival_cycle",
-    "fe1_redirect_cycle", "ras_push_cycle", "ras_pop_cycle",
-    "ras_drop_cycle",
+    "sb_push_cycle", "sb_delete_cycle", "fe1_redirect_cycle",
+    "ras_push_cycle", "ras_pop_cycle", "ras_drop_cycle",
 )
 CYCLE_LIST_FIELDS = ("collision_wait_cycles", "collision_replay_cycles")
 ID_FIELDS = (
-    "data_arrival_producer_id", "pre_fetch_wait_shared_id",
-    "bubble_causer_id", "bubble_shared_id", "caused_bubble_recovery_id",
+    "pre_fetch_wait_shared_id", "bubble_causer_id", "bubble_shared_id",
+    "caused_bubble_recovery_id",
 )
-ID_LIST_FIELDS = ("fwd_producer_ids",)
+ID_LIST_FIELDS = ("dep_producer_ids", "fwd_producer_ids")
 EVENT_FIELDS = {
     "ic_events.access_cycles": "cycle",
     "ic_events.miss_cycles": "cycle",
@@ -98,13 +99,14 @@ EVENT_TWIN_FIELDS = {
     "ic_events.coalesced_miss_addrs": "ic_events.coalesced_miss_cycles",
 }
 
-# The order README.md documents.
+# The order README.md documents under "The JSON".
 METADATA_KEY_ORDER = (
-    "tool", "schema_version", "trace_path", "clock_period", "time_unit",
-    "clock_period_source", "forward_delays", "forward_delays_measured",
-    "fe1_line_width", "seen_line_families", "record_fields", "cycle_fields",
-    "cycle_list_fields", "id_fields", "id_list_fields", "event_fields",
-    "event_twin_fields", "degraded", "clipped", "stats",
+    "tool", "schema_version", "trace_path", "config_name", "clock_period",
+    "time_unit", "clock_period_source", "forward_delays",
+    "forward_delays_measured", "fe1_line_width", "seen_line_families",
+    "record_fields", "cycle_fields", "cycle_list_fields", "id_fields",
+    "id_list_fields", "event_fields", "event_twin_fields", "degraded",
+    "clipped", "stats",
 )
 # The streamed loader refuses a JSON whose metadata is not first or whose
 # event objects arrive before instructions.
@@ -116,6 +118,9 @@ TOP_LEVEL_ORDER = (
 # The trace does not record gem5's tick rate. time_unit assumes the default
 # of 1 ps per tick.
 TIME_UNIT = "1ps"
+
+# The line of run_gem5.py's report naming the configuration script it ran.
+REPORT_CONFIG_PREFIX = "Config: "
 
 # ============================================================================
 # 4. Core constants
@@ -142,10 +147,6 @@ MIN_DELAY_SAMPLES = 4
 # and its low line is normally the line before, so the search back is short.
 INSTR_BYTES = 4
 WRAP_SEARCH_LINES = 32
-
-# A cap, so a chain of producers that never settles cannot hold up the run.
-# Reaching it with the last pass still changing prints a warning.
-MAX_HAZARD_PASSES = 10
 
 # The progress line is offered one line in this many plus one, a mask so
 # the test stays cheap.
@@ -180,12 +181,11 @@ RE_ID_EXEC = re.compile(r"\d+/\S+/(?P<line_seq>\d+)/(?P<fetch_seq>\d+)\.\d+")
 RE_ID_FETCH = re.compile(r"\d+/\S+/(?P<line_seq>\d+)/(?P<fetch_seq>\d+)")
 RE_COMPRESSED = re.compile(r"^c[_.]")
 
-# branchPred, stock.
+# branchPred, stock. gem5 v25 prints these four for LocalBP only, and no
+# other predictor, BTB or RAS parameter. config_params keeps them snake_case.
 RE_BP_PARAM = re.compile(
-    r"(?P<name>local predictor size|local counter bits|global predictor "
-    r"size|global counter bits|choice predictor size|choice counter bits|"
-    r"instruction shift amount|index mask|BTB entries|RAS size):\s+"
-    r"(?P<value>\S+)")
+    r"(?P<name>local predictor size|local counter bits|instruction shift "
+    r"amount|index mask):\s+(?P<value>\S+)")
 
 # fetch1, stock.
 RE_MINORLINE = re.compile(
@@ -685,6 +685,7 @@ class LineParser:
         if part in self.FAMILIES:
             self.seen_families.add(self.FAMILIES[part])
         if part.startswith("scoreboard"):
+            self.seen_families.add("scoreboard")
             handler = self.on_scoreboard
         else:
             handler = getattr(self, self.HANDLERS.get(part, "on_cpu"))
@@ -723,7 +724,8 @@ class LineParser:
     def on_branch_predictor(self, cycle, message):
         m = RE_BP_PARAM.match(message)
         if m:
-            self.bp_params.setdefault(m.group("name"), m.group("value"))
+            self.bp_params.setdefault(m.group("name").replace(" ", "_"),
+                                      m.group("value"))
 
     def on_fetch1(self, cycle, message):
         if message.startswith("MinorLine: "):
@@ -1235,9 +1237,9 @@ def branch_model(entry, flushed, events):
 
 
 def build_record(parser, counts, context, fetch_seq):
-    """One schema 7 record in the order of README.md, every key present
-    until the writer leaves out the null ones. The whole-run fields of
-    section 9 start null and are filled there."""
+    """One schema 8 record in RECORD_FIELDS order, the order README.md
+    documents, every key present until the writer leaves out the null ones.
+    The whole-run fields of section 9 start null and are filled there."""
     entry = parser.execute_map[fetch_seq]
     delays = context["delays"]
     flushed = fetch_seq in parser.flush_cycles_by_id
@@ -1281,10 +1283,11 @@ def build_record(parser, counts, context, fetch_seq):
     ex = issue_ok if issue_ok is not None else entry["cycle"]
     co = context["commit_cycle"](entry, flushed)
 
-    # A load's unit is done when its request completes, anything else when
-    # the scoreboard says its result returns, then raised to the end of any
-    # commit stall.
+    # A load is done when its request completes, else when the scoreboard
+    # returns its result, raised to a commit stall's end. A store, a branch
+    # or a write of z prints neither, so it falls back, synthesised.
     lsq = parser.lsq_events.get(fetch_seq)
+    fu_done_seen = True
     if (lsq is not None and not lsq["is_store"]
             and lsq["complete_cycle"] is not None):
         fu_done = lsq["complete_cycle"]
@@ -1292,6 +1295,7 @@ def build_record(parser, counts, context, fetch_seq):
         fu_done = returned
     else:
         fu_done = co if co is not None else ex + 1
+        fu_done_seen = False
     stall_end = parser.commit_stall_end.get(fetch_seq)
     if stall_end is not None:
         fu_done = max(fu_done, stall_end if co is None else min(stall_end, co))
@@ -1322,11 +1326,14 @@ def build_record(parser, counts, context, fetch_seq):
     if held_hi is not None and (req_hi is None or held_hi >= req_hi):
         held_hi = None
 
-    synthesised = [stage for stage, seen in (
-        ("fe1", fe1_seen), ("fe2", fe2_seen), ("dec", dec_seen))
-        if seen is None]
-    if returned is None and entry["dest"].strip():
-        synthesised.append("fu_done")
+    # The keys filled from their neighbours rather than read, in record
+    # order. A missing Fetch1 line is the record's own line's response.
+    synthesised = [key for key, seen in (
+        ("fe1_resp_hi_cycle" if wraps else "fe1_resp_lo_cycle",
+         fe1_seen is not None),
+        ("fe2_cycle", fe2_seen is not None),
+        ("dec_cycle", dec_seen is not None),
+        ("fu_done_cycle", fu_done_seen)) if not seen]
 
     dc_miss, dc_coalesced = dc_verdict(lsq, context["dc_by_cycle"])
     sb = parser.sb_events.get(fetch_seq)
@@ -1379,11 +1386,10 @@ def build_record(parser, counts, context, fetch_seq):
         "sb_delete_cycle": sb["delete_cycle"] if sb is not None else None,
         "collision_wait_cycles": parser.collision_wait.get(fetch_seq),
         "collision_replay_cycles": parser.collision_replay.get(fetch_seq),
+        "dep_producer_ids": None,
+        "dep_producer_regs": None,
         "fwd_producer_ids": None,
         "fwd_producer_regs": None,
-        "data_arrival_cycle": None,
-        "data_arrival_producer_id": None,
-        "data_arrival_is_mem": None,
         **branch,
         "ras_push_cycle": parser.ras_push.get(fetch_seq),
         "ras_pop_cycle": parser.ras_pop.get(fetch_seq),
@@ -1408,7 +1414,7 @@ def build_records(parser, delays):
     """Every record in id order, the ids of the records that end in a
     serialise flush, and the assembly counters."""
     counts = {"n_ic_bound_without_addr": 0, "n_wrap_partner_not_found": 0,
-              "n_wrap_partner_without_request": 0}
+              "n_wrap_partner_without_request": 0, "n_unmatched_commits": 0}
     enrich_by_pc = {}
     for commit in parser.commits:
         enrich_by_pc.setdefault(commit["pc"], commit)
@@ -1424,6 +1430,10 @@ def build_records(parser, delays):
     }
     records = [build_record(parser, counts, context, fetch_seq)
                for fetch_seq in sorted(parser.execute_map)]
+    # A commit no record took is an instruction the trace committed without
+    # a record, which a trace cut at its start or missing lines leaves.
+    counts["n_unmatched_commits"] = sum(
+        1 for commit in context["commit_cycle"].merged if not commit["used"])
     return records, context["serialise_ids"], counts
 
 
@@ -1437,72 +1447,48 @@ def split_regs(text):
             if reg.strip() and reg.strip() != "-"]
 
 
-def forwarding_producers(records):
-    """For each source register, the latest earlier record writing it that
-    was not flushed. Flushed consumers keep their producers, since the viewer
-    draws their arrows in the flushed colour."""
+def register_dependences(records):
+    """dep_producer_ids and dep_producer_regs: for each source register but
+    the zero register, the latest earlier record writing it that was not
+    flushed, committed or not. fwd_producer_ids and fwd_producer_regs keep
+    the producers that had not committed before the record's ex_cycle, so
+    their value was forwarded in flight rather than read from the register
+    file. Flushed consumers keep both, since the viewer draws their arrows
+    in the flushed colour."""
     last_writer = {}
+    by_id = {}
     for rec in records:
-        ids, regs = [], []
+        ids, regs, fwd_ids, fwd_regs = [], [], [], []
         for reg in split_regs(rec["src_regs"]):
             if reg == ZERO_REGISTER or reg in regs:
                 continue
             producer = last_writer.get(reg)
-            if producer is not None:
-                ids.append(producer)
-                regs.append(reg)
-        rec["fwd_producer_ids"] = ids or None
-        rec["fwd_producer_regs"] = regs or None
+            if producer is None:
+                continue
+            ids.append(producer)
+            regs.append(reg)
+            committed = by_id[producer]["co_cycle"]
+            if committed is None or committed >= rec["ex_cycle"]:
+                fwd_ids.append(producer)
+                fwd_regs.append(reg)
+        rec["dep_producer_ids"] = ids or None
+        rec["dep_producer_regs"] = regs or None
+        rec["fwd_producer_ids"] = fwd_ids or None
+        rec["fwd_producer_regs"] = fwd_regs or None
         if not rec["flushed"]:
+            by_id[rec["id"]] = rec
             for reg in split_regs(rec["dest_regs"]):
                 if reg != ZERO_REGISTER:
                     last_writer[reg] = rec["id"]
 
 
-def data_hazards(records):
-    """Move fu_done_cycle past the latest forwarded operand's arrival, to a
-    fixed point, since a moved producer can move its consumers. Returns the
-    passes taken and whether the last one changed nothing."""
-    by_id = {rec["id"]: rec for rec in records}
-    original = {}
-    passes, changed = 0, True
-    while changed and passes < MAX_HAZARD_PASSES:
-        passes += 1
-        changed = False
-        for rec in records:
-            if not rec["fwd_producer_ids"]:
-                continue
-            latest, producer_id = rec["ex_cycle"], None
-            for candidate in rec["fwd_producer_ids"]:
-                arrived = by_id[candidate]["fu_done_cycle"] + 1
-                if arrived > latest:
-                    latest, producer_id = arrived, candidate
-            if producer_id is None:
-                continue
-            # The unit's own latency is kept from before any move, and a
-            # record never finishes after it commits.
-            unit_latency = (original.setdefault(rec["id"],
-                                                rec["fu_done_cycle"])
-                            - rec["ex_cycle"])
-            moved = latest + unit_latency
-            if rec["co_cycle"] is not None:
-                moved = min(moved, rec["co_cycle"])
-            if moved > rec["fu_done_cycle"]:
-                producer = by_id[producer_id]
-                rec["fu_done_cycle"] = moved
-                rec["data_arrival_cycle"] = latest
-                rec["data_arrival_producer_id"] = producer_id
-                rec["data_arrival_is_mem"] = (
-                    producer["lsq_issue_cycle"] is not None
-                    and producer["is_store"] is not True)
-                changed = True
-    return passes, not changed
-
-
 def tag_bubbles(records, serialise_ids, ic_miss_cycles):
     """The bubble before each record that resumed after a redirect or a
     serialise flush, on both ends, then shared with the records fetched on
-    the same request as the one that resumed."""
+    the same request as the one that resumed. A bubble runs from Fetch1's
+    stream change to the recovery's first request, and a refill's or a
+    flush's redirect delay, Execute's transit back to Fetch1 from the
+    causer's commit, is kept apart. One of 0 cycles with no delay is none."""
     commits = sorted((rec for rec in records
                       if not rec["flushed"] and rec["co_cycle"] is not None),
                      key=lambda rec: (rec["co_cycle"], rec["id"]))
@@ -1528,15 +1514,16 @@ def tag_bubbles(records, serialise_ids, ic_miss_cycles):
                    and misses[first_miss] <= end)
         kind = ("flush" if is_flush else rec["bp_outcome"] if refill
                 else "pred_taken")
-        # On a clash the later redirect caused the refill, so it keeps it.
         # Only a refill or a flush pays Execute's transit back to Fetch1.
+        delay = max(0, start - rec["co_cycle"]) if refill or is_flush else 0
+        if gap < 1 and delay < 1:
+            continue
+        # On a clash the later redirect caused the refill, so it keeps it.
         held = bubbles.get(recovery["id"])
         if held is None or start > held["start"]:
             bubbles[recovery["id"]] = {
                 "kind": kind, "causer": rec["id"], "gap": gap,
-                "start": start, "ic_miss": ic_miss,
-                "delay": (max(0, start - rec["co_cycle"])
-                          if refill or is_flush else 0),
+                "start": start, "ic_miss": ic_miss, "delay": delay,
             }
         caused[rec["id"]] = (recovery["id"], gap, kind)
     # On a clash one bubble has one owner, so the losing causer names none.
@@ -1547,8 +1534,7 @@ def tag_bubbles(records, serialise_ids, ic_miss_cycles):
     for rec in records:
         bubble = bubbles.get(rec["id"])
         if (not rec["flushed"] and bubble is not None
-                and rec["fe1_req_lo_cycle"] is not None
-                and (bubble["gap"] >= 1 or bubble["delay"] >= 1)):
+                and rec["fe1_req_lo_cycle"] is not None):
             owners.setdefault(rec["fe1_req_lo_cycle"], rec["id"])
     shared = {}
     for rec in records:
@@ -1591,25 +1577,11 @@ def last_request_cycle(rec):
 
 
 def pre_fetch_waits(records):
-    """The cycles each fetch waited beyond the run's shortest gap between
-    two fetch requests, measured from the previous non-flushed record's last
-    request, and shared across the records one request fetched. A wrap's own
-    wait between its two requests is its high-line wait, so a record fetched
-    on that high request waits nothing more."""
-    shortest, prev = None, None
-    for rec in records:
-        if rec["flushed"]:
-            continue
-        req = rec["fe1_req_lo_cycle"]
-        prev_req = last_request_cycle(prev) if prev is not None else None
-        if req is not None and prev_req is not None and req > prev_req:
-            gap = req - prev_req
-            shortest = gap if shortest is None else min(shortest, gap)
-        prev = rec
-    # A run with no two requests to compare has no shortest gap, and 1 is
-    # the least any fetch can follow another by.
-    shortest = shortest or 1
-
+    """The cycles each fetch waited beyond the one cycle any fetch follows
+    another by, measured from the previous non-flushed record's last
+    request, and shared across the records one request fetched. A wrap's
+    own wait between its two requests is its high-line wait, so a record
+    fetched on that high request waits nothing more."""
     last = group_first = None
     for rec in records:
         req = rec["fe1_req_lo_cycle"]
@@ -1633,7 +1605,7 @@ def pre_fetch_waits(records):
             last = rec
             continue
         rec["n_pre_fetch_wait_cycles"] = max(
-            0, req - last_request_cycle(last) - shortest)
+            0, req - last_request_cycle(last) - 1)
         last = rec
 
 
@@ -1737,9 +1709,10 @@ def build_degraded(parser, records):
     census.require(
         "minor_inst" in seen, "minor_inst",
         "No MinorInst line was captured, so src_regs and dest_regs are "
-        "empty, no branch is classified, fwd_producer_ids finds no producer, "
-        "fu comes only from the commit log, an instruction flushed before "
-        "issue has no record and no bubble is found.")
+        "empty, no branch is classified, dep_producer_ids and "
+        "fwd_producer_ids find no producer, fu comes only from the commit "
+        "log, an instruction flushed before issue has no record and no "
+        "bubble is found.")
     # A trace without these still yields a record for every instruction, so
     # the figures they feed would otherwise read as measured.
     census.require(
@@ -1757,8 +1730,13 @@ def build_degraded(parser, records):
         "execute" in seen or not records, "execute",
         "No MinorExecute line was captured, so no flush is seen: flushed is "
         "false and flush_cycle null on every record, and a wrong-path "
-        "record reads as neither committed nor flushed. fu_idx and "
-        "scoreboard_return_cycle are null.")
+        "record reads as neither committed nor flushed. fu_idx is null.")
+    census.require(
+        "scoreboard" in seen or not records, "scoreboard",
+        "No MinorScoreboard line was captured, so scoreboard_return_cycle "
+        "is null and fu_done_cycle falls back to the commit cycle on every "
+        "record but a load with its LSQ completion, each one listing "
+        "fu_done_cycle in synthesised_stages.")
     census.require(
         "icache" in seen, "icache",
         "ic_miss_lo and ic_miss_hi are null and every ic_events array but "
@@ -1785,25 +1763,35 @@ def build_degraded(parser, records):
         "ras_push_cycle, ras_pop_cycle and ras_drop_cycle are null and every "
         "ras_events array is empty, which RAS in --debug-flags when capturing "
         "fills.")
-    # These ask whether what the trace held is usable, which the census of
-    # families cannot answer: a truncated trace has every family.
+    # A whole run drains its pipeline up to m5_exit, an M5Op that stops the
+    # simulation with younger instructions still in flight. Any other record
+    # neither committed nor flushed marks a cut at a line boundary.
+    last = max((rec for rec in records
+                if not rec["flushed"] and rec["co_cycle"] is not None),
+               key=lambda rec: rec["co_cycle"], default=None)
+    committed = last is not None
+    exit_id = last["id"] if committed and last["disasm"] == "M5Op" else None
+    stranded = sum(1 for rec in records
+                   if not rec["flushed"] and rec["co_cycle"] is None
+                   and (exit_id is None or rec["id"] < exit_id))
+    cut = ("its last line has no newline" if not parser.ends_cleanly else
+           f"{stranded:,} record(s) are neither committed nor flushed, which "
+           f"a whole run never leaves")
     census.require(
-        parser.ends_cleanly, "truncated",
-        "The trace's last line has no newline, so the file was cut part way "
-        "through a line: instructions stops early, the run's last commits "
-        "and its m5_dump_stats are missing, and every count in "
-        "metadata.stats is a lower bound.")
+        parser.ends_cleanly and not (committed and stranded), "truncated",
+        f"The trace was cut, since {cut}: instructions stops early, the "
+        f"run's last commits and its m5_dump_stats are missing, and every "
+        f"count in metadata.stats is a lower bound.")
     census.require(
         bool(records), "no_records",
         "No instruction was recovered from the trace, so instructions is "
         "empty.")
     census.require(
-        any(not rec["flushed"] and rec["co_cycle"] is not None
-            for rec in records), "no_commits",
+        committed, "no_commits",
         "No instruction committed, which a whole run of any program cannot "
         "produce, so every co_cycle is null, no bubble is found, "
-        "fu_done_cycle and data_arrival_cycle lose the commit stall, and the "
-        "trace is most likely truncated or captured without ExecAll.")
+        "fu_done_cycle loses the commit stall, and the trace is most likely "
+        "truncated or captured without ExecAll.")
     return census.entries
 
 
@@ -1812,7 +1800,7 @@ def build_degraded(parser, records):
 # ============================================================================
 
 
-def build_stats(parser, records, counts, hazard_passes, n_ras_unbound):
+def build_stats(parser, records, counts, n_ras_unbound):
     """metadata.stats: whole-run counters, every one prefixed n_."""
     kinds = collections.Counter(
         rec["bubble_kind"] for rec in records
@@ -1823,6 +1811,7 @@ def build_stats(parser, records, counts, hazard_passes, n_ras_unbound):
                            if not rec["flushed"]
                            and rec["co_cycle"] is not None),
         "n_flushed": sum(1 for rec in records if rec["flushed"]),
+        "n_unmatched_commits": counts["n_unmatched_commits"],
         "n_unattributed_collisions": parser.n_unattributed_collisions,
         "n_wrap_partner_not_found": counts["n_wrap_partner_not_found"],
         "n_wrap_partner_without_request": counts[
@@ -1830,7 +1819,6 @@ def build_stats(parser, records, counts, hazard_passes, n_ras_unbound):
         "n_ic_bound_without_addr": counts["n_ic_bound_without_addr"],
         "n_blocked_spans_closed_at_end": parser.n_blocked_spans_closed_at_end,
         "n_ras_drops_unbound": n_ras_unbound,
-        "n_hazard_passes": hazard_passes,
         "bubbles": {
             "n_pred_taken": kinds["pred_taken"],
             "n_unpred": kinds["unpred"],
@@ -1844,13 +1832,16 @@ def build_stats(parser, records, counts, hazard_passes, n_ras_unbound):
     }
 
 
-def build_metadata(trace_path, ticks_per_cycle, period_source, delays,
-                   measured, parser, degraded, stats):
+def build_metadata(trace_path, config_name, ticks_per_cycle, period_source,
+                   delays, measured, parser, degraded, stats):
     """metadata, in METADATA_KEY_ORDER."""
     metadata = {
         "tool": TOOL,
         "schema_version": SCHEMA_VERSION,
         "trace_path": trace_path,
+        # A label, not a reading: a trace does not name the configuration
+        # script gem5 ran, so it comes from --config-name or the report.
+        "config_name": config_name,
         "clock_period": ticks_per_cycle,
         "time_unit": TIME_UNIT,
         "clock_period_source": period_source,
@@ -2077,6 +2068,20 @@ def build_parser():
         help="Exit with 3 when metadata.degraded is not empty. The JSON is "
              "still written. Use this in batch runs so a degraded trace is "
              "not mistaken for a complete one")
+    parser.add_argument(
+        "--config-name", metavar="NAME",
+        help="The gem5 configuration the trace was captured on, written to "
+             "metadata.config_name. A trace does not name it, so this is a "
+             "label, not a measurement. Defaults to the Config line of the "
+             "_report.txt run_gem5.py leaves beside the trace, so "
+             "daxpy_trace.config1.txt reads daxpy_report.config1.txt, and "
+             "to null without one")
+    parser.add_argument(
+        "--ras-size", type=int, metavar="N",
+        help="The return address stack's capacity, written to "
+             "config_params.ras_size, which the viewer sets the stack's "
+             "depth against. gem5 does not print it, so it is left out "
+             "unless given")
     return parser
 
 
@@ -2096,7 +2101,45 @@ def default_out_path(trace):
     return os.path.join(folder, name + ".json")
 
 
-def print_warnings(metadata, hazards_converged):
+def report_path(trace):
+    """The _report.txt run_gem5.py leaves beside a trace, the trace's path
+    with _trace replaced by _report and the extension by .txt, or None for
+    a trace whose name holds no _trace."""
+    folder, name = os.path.split(trace)
+    for ext in (".txt", ".log", ".trace"):
+        if name.endswith(ext):
+            name = name[:-len(ext)]
+            break
+    at = (name + ".").rfind("_trace.")
+    if at < 0:
+        return None
+    name = name[:at] + "_report" + name[at + len("_trace"):]
+    return os.path.join(folder, name + ".txt")
+
+
+def find_config_name(args):
+    """metadata.config_name: --config-name, else the configuration the
+    report beside the trace names on its Config line, else None. Says
+    which."""
+    if args.config_name:
+        return args.config_name
+    report = report_path(args.trace)
+    if report is not None and os.path.isfile(report):
+        with open(report, errors="replace") as f:
+            for line in f:
+                if line.startswith(REPORT_CONFIG_PREFIX):
+                    name = line[len(REPORT_CONFIG_PREFIX):].strip()
+                    if name:
+                        log_info(f"Configuration {name}, from "
+                                 f"{os.path.basename(report)}. "
+                                 f"--config-name names another.")
+                        return name
+    log_info("No --config-name and no report naming the configuration "
+             "beside the trace, so metadata.config_name is null.")
+    return None
+
+
+def print_warnings(metadata):
     """What a reader of the JSON should know that is not a degradation."""
     stats = metadata["stats"]
     if stats["n_unattributed_collisions"]:
@@ -2131,10 +2174,10 @@ def print_warnings(metadata, hazards_converged):
                  f"{MIN_DELAY_SAMPLES} observed stage gaps, so they default "
                  f"to 1 rather than being measured, and any stage "
                  f"synthesised from them is an estimate.")
-    if not hazards_converged:
-        log_warn(f"The forwarding fixed point was still moving fu_done_cycle "
-                 f"after {MAX_HAZARD_PASSES} passes, so some data hazards may "
-                 f"end early.")
+    if stats["n_unmatched_commits"]:
+        log_warn(f"{stats['n_unmatched_commits']:,} commit line(s) could not "
+                 f"be tied to a record, so those instructions are missing "
+                 f"from instructions. metadata.stats counts them.")
     if not stats["n_records"]:
         log_warn("No MinorCPU instruction was recovered, so the trace may not "
                  "be a gem5 MinorCPU debug trace. Check that it was captured "
@@ -2190,6 +2233,7 @@ def print_summary(trace, out, metadata, ic_events, elapsed):
         ("Records", f"{stats['n_records']:,}"),
         ("Committed", f"{stats['n_committed']:,}"),
         ("Flushed", f"{stats['n_flushed']:,}"),
+        ("Configuration", metadata["config_name"] or "-"),
         ("Clock period", clock_text(metadata)),
         ("Forward delays", f"{delays['fe1_fe2']}/{delays['fe2_dec']}/"
                            f"{delays['dec_ex']}"),
@@ -2203,6 +2247,9 @@ def main():
     args = build_parser().parse_args()
     if args.ticks_per_cycle is not None and args.ticks_per_cycle < 1:
         log_error(f"--tpc must be at least 1, not {args.ticks_per_cycle}.")
+        return 2
+    if args.ras_size is not None and args.ras_size < 0:
+        log_error(f"--ras-size must be at least 0, not {args.ras_size}.")
         return 2
     if not os.path.isfile(args.trace):
         log_error(f"Trace not found: {args.trace}")
@@ -2242,21 +2289,24 @@ def main():
     delays, measured = infer_forward_delays(parser)
     records, serialise_ids, counts = build_records(parser, delays)
     ic_events, dc_events, ras_events = event_objects(parser)
-    forwarding_producers(records)
-    hazard_passes, hazards_converged = data_hazards(records)
+    register_dependences(records)
     tag_bubbles(records, serialise_ids, ic_events["miss_cycles"])
     pre_fetch_waits(records)
     n_ras_unbound = bind_ras_drops(records, ras_events["drop_cycles"],
                                    parser.branch_events)
 
     degraded = build_degraded(parser, records)
-    stats = build_stats(parser, records, counts, hazard_passes, n_ras_unbound)
+    stats = build_stats(parser, records, counts, n_ras_unbound)
+    config_params = dict(parser.bp_params)
+    if args.ras_size is not None:
+        config_params["ras_size"] = args.ras_size
     try:
-        metadata = build_metadata(args.trace, ticks_per_cycle, period_source,
-                                  delays, measured, parser, degraded, stats)
+        metadata = build_metadata(args.trace, find_config_name(args),
+                                  ticks_per_cycle, period_source, delays,
+                                  measured, parser, degraded, stats)
         data = {
             "metadata": metadata,
-            "config_params": parser.bp_params,
+            "config_params": config_params,
             "symbols": sorted([base, name] for name, base
                               in parser.symbol_base.items()),
             "instructions": records,
@@ -2275,7 +2325,7 @@ def main():
     log_info(f"Writing {out}")
     write_json(out, data)
 
-    print_warnings(metadata, hazards_converged)
+    print_warnings(metadata)
     print_summary(args.trace, out, metadata, ic_events,
                   time.time() - started)
     print_degraded(degraded)

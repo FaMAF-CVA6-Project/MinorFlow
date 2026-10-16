@@ -18,6 +18,7 @@ one for the submodule.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -66,6 +67,54 @@ def human(size):
             return f"{size:.1f} {unit}"
 
 # SHARED END py-human-size
+
+
+# SHARED BEGIN py-json-staleness
+
+# Needs: os, re
+
+# A JSON's schema_version sits in the first lines of its metadata.
+JSON_HEAD_BYTES = 4096
+RE_TRACER_SCHEMA = re.compile(r"^SCHEMA_VERSION = (\d+)$", re.M)
+RE_JSON_SCHEMA = re.compile(r'"schema_version":\s*(\d+)')
+
+
+def tracer_schema(tracer):
+    """The SCHEMA_VERSION a tracer writes, read from its source, or None."""
+    try:
+        with open(tracer, encoding="utf-8") as f:
+            match = RE_TRACER_SCHEMA.search(f.read())
+    except OSError:
+        return None
+    return int(match.group(1)) if match else None
+
+
+def json_schema(path):
+    """The schema_version at the head of a JSON, or None."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            match = RE_JSON_SCHEMA.search(f.read(JSON_HEAD_BYTES))
+    except OSError:
+        return None
+    return int(match.group(1)) if match else None
+
+
+def stale_reason(source, out_json, tracer, schema):
+    """Why out_json needs converting from source, or None when it is up to
+    date: missing, older than its input or than the tracer, or written at
+    another schema than the tracer's."""
+    if not os.path.isfile(out_json):
+        return "missing"
+    made = os.path.getmtime(out_json)
+    if made < os.path.getmtime(source):
+        return "older than its input"
+    if made < os.path.getmtime(tracer):
+        return "older than the tracer"
+    if json_schema(out_json) != schema:
+        return "at another schema"
+    return None
+
+# SHARED END py-json-staleness
 
 
 def json_for(path):
@@ -122,12 +171,13 @@ def main():
                              f"state, so memory binds before cores do. With "
                              f"more than 1 the tracers run with --quiet, so "
                              f"their progress lines do not interleave")
-    parser.add_argument("--dry-run", action="store_true",
+    parser.add_argument("-n", "--dry-run", action="store_true",
                         help="Print which traces would be converted to which "
                              "JSONs, and convert nothing")
     parser.add_argument("--force", action="store_true",
-                        help="Convert a trace even when its JSON already "
-                             "exists and is at least as new")
+                        help="Convert a trace even when its JSON is up to "
+                             "date: at least as new as the trace and the "
+                             "tracer, and at the tracer's schema")
     parser.add_argument("--quiet", action="store_true",
                         help="Pass --quiet to the tracer, dropping its "
                              "progress line")
@@ -154,18 +204,26 @@ def main():
         print(f"[INFO] No *{TRACE_MARK}*{TRACE_END} files in {folder}")
         return 0
 
+    schema = tracer_schema(TRACER)
     todo, skipped = [], []
+    redone = {}
     for trace in traces:
         out_json = json_for(trace)
-        if (not args.force and os.path.isfile(out_json)
-                and os.path.getmtime(out_json) >= os.path.getmtime(trace)):
+        reason = stale_reason(trace, out_json, TRACER, schema)
+        if not args.force and reason is None:
             skipped.append(os.path.basename(out_json))
         else:
             todo.append((trace, out_json))
+            if reason not in (None, "missing"):
+                redone[reason] = redone.get(reason, 0) + 1
 
     if skipped:
         print(f"[INFO] {len(skipped)} JSON(s) already up to date, use --force "
               f"to redo them: {', '.join(skipped)}")
+    if redone:
+        print(f"[INFO] {sum(redone.values())} JSON(s) out of date: "
+              + ", ".join(f"{count} {reason}"
+                          for reason, count in sorted(redone.items())))
     if not todo:
         return 0
     if args.dry_run:
