@@ -25,13 +25,25 @@ references:
   - type: conference-paper
     title: "MinorFlow: A gem5 Pipeline Visualizer for Teaching Computer Architecture"
     year: 2026
+    status: in-press
     conference:
-      name: "CARLA 2026 - Latin America High Performance Computing Conference"
+      name: >-
+        RV-CONVERGE 2026: Workshop on RISC-V for the HPC and AI Convergence
+        Era, at CARLA 2026, the Latin America High Performance Computing
+        Conference
+      city: "Córdoba"
+      country: "AR"
+      date-start: "2026-09-21"
+      date-end: "2026-09-25"
+    collection-title: "CEUR Workshop Proceedings"
+    issn: "1613-0073"
+    publisher:
+      name: "CEUR-WS.org"
+    license: CC-BY-4.0
     notes: >-
-      Accepted and presented at CARLA 2026, awaiting publication in its
-      proceedings, in Springer's Communications in Computer and Information
-      Science series. Paper sources, figures and validation data are in
-      docs/CARLA2026.
+      Accepted and presented at CARLA 2026, and to appear in the CEUR Workshop
+      Proceedings under CC BY 4.0. Paper sources, figures and validation data
+      are in docs/CARLA2026, the CEUR version in docs/CARLA2026/CEUR_submission.
     authors:
       - family-names: "Nieto"
         given-names: "Manuel"
