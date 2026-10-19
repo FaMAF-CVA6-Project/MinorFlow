@@ -407,6 +407,10 @@ def parse_table(text):
     comments = {}
     current = None
     for line in text.splitlines():
+        # The comment table sits above the TESTS dict, so a later comment that
+        # only looks like a row, such as a sum, never replaces one of it.
+        if line.startswith("TESTS = {"):
+            break
         row = ROW_RE.match(line)
         if row:
             current = int(row.group(1))
